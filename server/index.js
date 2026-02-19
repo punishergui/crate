@@ -20,7 +20,7 @@ function normalizeTitle(input) {
   return String(input || '')
     .toLowerCase()
     .trim()
-    .replace(/[.,:;'"()\[\]{}!?-]/g, ' ')
+    .replace(/[.,!?:;'"()\[\]{}\-_/]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -62,63 +62,84 @@ function validateSettings(payload) {
   return out;
 }
 
-function getArtistOverview(artistId) {
-  const owned = db.prepare(`
+function parseId(value, fieldName = 'id') {
+  const out = Number(value);
+  if (!Number.isInteger(out) || out < 1) {
+    throw new Error(`${fieldName} must be a positive integer`);
+  }
+  return out;
+}
+
+function parseOptionalInteger(value, fieldName) {
+  if (value === undefined || value === null || value === '') return null;
+  if (!Number.isInteger(value)) {
+    throw new Error(`${fieldName} must be an integer`);
+  }
+  return value;
+}
+
+function getOwnedAlbums(artistId) {
+  return db.prepare(`
     SELECT id, title, path, lastFileMtime, formatsJson, trackCount
     FROM albums
     WHERE artistId = ? AND deleted = 0
     ORDER BY title
   `).all(artistId).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+}
 
-  const wanted = db.prepare(`
-    SELECT id, title, year, notes, createdAt
-    FROM wanted_albums
+function getExpectedAlbums(artistId) {
+  return db.prepare(`
+    SELECT id, artistId, title, year, notes, linkedAlbumId, createdAt
+    FROM expected_albums
     WHERE artistId = ?
     ORDER BY createdAt DESC, id DESC
   `).all(artistId);
+}
 
-  const aliases = db.prepare(`
-    SELECT alias, mapsToTitle
-    FROM album_aliases
-    WHERE artistId = ?
-  `).all(artistId);
-
-  const aliasMap = new Map();
-  for (const item of aliases) {
-    aliasMap.set(normalizeTitle(item.alias), normalizeTitle(item.mapsToTitle));
-  }
-
-  const ownedMatchSet = new Set();
-  for (const album of owned) {
-    const normalizedOwned = normalizeTitle(album.title);
-    ownedMatchSet.add(normalizedOwned);
-    const mappedTitle = aliasMap.get(normalizedOwned);
-    if (mappedTitle) ownedMatchSet.add(mappedTitle);
-  }
-
-  let ownedMatched = 0;
-  const missing = [];
-  for (const wantedAlbum of wanted) {
-    const wantedNormalized = normalizeTitle(wantedAlbum.title);
-    if (ownedMatchSet.has(wantedNormalized)) {
-      ownedMatched += 1;
-    } else {
-      missing.push({
-        id: wantedAlbum.id,
-        title: wantedAlbum.title,
-        year: wantedAlbum.year,
-        notes: wantedAlbum.notes
-      });
+function computeOwnedMissing(artistId) {
+  const ownedAlbums = getOwnedAlbums(artistId);
+  const expected = getExpectedAlbums(artistId);
+  const ownedById = new Map(ownedAlbums.map((album) => [album.id, album]));
+  const ownedByNormalizedTitle = new Map();
+  for (const album of ownedAlbums) {
+    const normalized = normalizeTitle(album.title);
+    if (!ownedByNormalizedTitle.has(normalized)) {
+      ownedByNormalizedTitle.set(normalized, album);
     }
   }
 
-  const completionPct = wanted.length === 0 ? null : Math.round((ownedMatched / wanted.length) * 100);
+  const matches = [];
+  const matchedExpectedIds = new Set();
+  for (const item of expected) {
+    if (item.linkedAlbumId && ownedById.has(item.linkedAlbumId)) {
+      matches.push({ expectedId: item.id, albumId: item.linkedAlbumId, method: 'linked' });
+      matchedExpectedIds.add(item.id);
+      continue;
+    }
+    const auto = ownedByNormalizedTitle.get(normalizeTitle(item.title));
+    if (auto) {
+      matches.push({ expectedId: item.id, albumId: auto.id, method: 'auto' });
+      matchedExpectedIds.add(item.id);
+    }
+  }
+
+  const missing = expected.filter((item) => !matchedExpectedIds.has(item.id));
+  const ownedCount = matchedExpectedIds.size;
+  const expectedCount = expected.length;
+  const missingCount = missing.length;
+  const percent = expectedCount === 0 ? null : Math.round((ownedCount / expectedCount) * 100);
 
   return {
-    owned,
-    wanted,
+    ownedAlbums,
+    expected,
     missing,
-    completionPct
+    completion: {
+      ownedCount,
+      expectedCount,
+      missingCount,
+      percent
+    },
+    matches
   };
 }
 
@@ -126,7 +147,7 @@ function getAllMissing(limit) {
   const artists = db.prepare('SELECT id, name FROM artists WHERE deleted = 0').all();
   const out = [];
   for (const artist of artists) {
-    const overview = getArtistOverview(artist.id);
+    const overview = computeOwnedMissing(artist.id);
     for (const item of overview.missing) {
       out.push({
         artistId: artist.id,
@@ -139,6 +160,14 @@ function getAllMissing(limit) {
   return out
     .sort((a, b) => a.artistName.localeCompare(b.artistName) || a.title.localeCompare(b.title))
     .slice(0, limit);
+}
+
+function ensureArtist(artistId) {
+  return db.prepare('SELECT id, name FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+}
+
+function ensureExpected(expectedId) {
+  return db.prepare('SELECT id, artistId, linkedAlbumId FROM expected_albums WHERE id = ?').get(expectedId);
 }
 
 app.get('/health', async () => {
@@ -230,19 +259,37 @@ app.get('/api/library/artists', async () => {
 });
 
 app.get('/api/library/artists/:id', async (req, reply) => {
-  const artist = db.prepare('SELECT id, name FROM artists WHERE id = ? AND deleted = 0').get(req.params.id);
+  let artistId;
+  try {
+    artistId = parseId(req.params.id, 'artist id');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+
+  const artist = ensureArtist(artistId);
   if (!artist) return reply.code(404).send({ error: 'Artist not found' });
-  const albums = db.prepare(`
-    SELECT id, title, path, lastFileMtime, formatsJson, trackCount
-    FROM albums WHERE artistId = ? AND deleted = 0 ORDER BY title
-  `).all(req.params.id).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+  const albums = getOwnedAlbums(artistId);
   return { artist, albums };
+});
+
+app.get('/api/library/artists/:id/owned-missing', async (req, reply) => {
+  let artistId;
+  try {
+    artistId = parseId(req.params.id, 'artist id');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  const artist = ensureArtist(artistId);
+  if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+
+  const details = computeOwnedMissing(artistId);
+  return { artist, ...details };
 });
 
 app.get('/api/library/recent', async (req) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
   return db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName, ar.id AS artistId
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
     WHERE al.deleted = 0
@@ -252,23 +299,54 @@ app.get('/api/library/recent', async (req) => {
 });
 
 app.get('/api/artist/:id/overview', async (req, reply) => {
-  const artistId = Number(req.params.id);
-  const artist = db.prepare('SELECT id, name FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  let artistId;
+  try {
+    artistId = parseId(req.params.id, 'artist id');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  const artist = ensureArtist(artistId);
   if (!artist) return reply.code(404).send({ error: 'Artist not found' });
-  return { artist, ...getArtistOverview(artistId) };
+  const details = computeOwnedMissing(artistId);
+  return {
+    artist,
+    owned: details.ownedAlbums,
+    wanted: details.expected,
+    missing: details.missing,
+    completionPct: details.completion.percent
+  };
 });
 
-app.post('/api/artist/:id/wanted', async (req, reply) => {
-  const artistId = Number(req.params.id);
-  const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+app.get('/api/artists/:id/expected', async (req, reply) => {
+  let artistId;
+  try {
+    artistId = parseId(req.params.id, 'artist id');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  const artist = ensureArtist(artistId);
   if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+  return getExpectedAlbums(artistId);
+});
+
+app.post('/api/artists/:id/expected', async (req, reply) => {
+  let artistId;
+  try {
+    artistId = parseId(req.params.id, 'artist id');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  if (!ensureArtist(artistId)) return reply.code(404).send({ error: 'Artist not found' });
 
   const { title, year, notes } = req.body || {};
   if (typeof title !== 'string' || !title.trim()) {
     return reply.code(400).send({ error: 'title is required' });
   }
-  if (year !== undefined && year !== null && (!Number.isInteger(year))) {
-    return reply.code(400).send({ error: 'year must be an integer' });
+  let parsedYear;
+  try {
+    parsedYear = parseOptionalInteger(year, 'year');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
   }
   if (notes !== undefined && notes !== null && typeof notes !== 'string') {
     return reply.code(400).send({ error: 'notes must be a string' });
@@ -276,15 +354,169 @@ app.post('/api/artist/:id/wanted', async (req, reply) => {
 
   const createdAt = new Date().toISOString();
   const result = db.prepare(`
-    INSERT INTO wanted_albums (artistId, title, year, notes, createdAt)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(artistId, title.trim(), year ?? null, notes ?? null, createdAt);
+    INSERT INTO expected_albums (artistId, title, year, notes, linkedAlbumId, createdAt)
+    VALUES (?, ?, ?, ?, NULL, ?)
+  `).run(artistId, title.trim(), parsedYear, notes ?? null, createdAt);
 
-  return db.prepare('SELECT id, artistId, title, year, notes, createdAt FROM wanted_albums WHERE id = ?').get(result.lastInsertRowid);
+  return db.prepare('SELECT id, artistId, title, year, notes, linkedAlbumId, createdAt FROM expected_albums WHERE id = ?').get(result.lastInsertRowid);
 });
 
-app.delete('/api/wanted/:wantedId', async (req) => {
-  db.prepare('DELETE FROM wanted_albums WHERE id = ?').run(req.params.wantedId);
+app.put('/api/expected/:expectedId', async (req, reply) => {
+  let expectedId;
+  try {
+    expectedId = parseId(req.params.expectedId, 'expectedId');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+
+  const existing = ensureExpected(expectedId);
+  if (!existing) return reply.code(404).send({ error: 'Expected album not found' });
+
+  const payload = req.body || {};
+  const updates = [];
+  const params = [];
+
+  if ('title' in payload) {
+    if (typeof payload.title !== 'string' || !payload.title.trim()) {
+      return reply.code(400).send({ error: 'title must be a non-empty string' });
+    }
+    updates.push('title = ?');
+    params.push(payload.title.trim());
+  }
+
+  if ('year' in payload) {
+    try {
+      updates.push('year = ?');
+      params.push(parseOptionalInteger(payload.year, 'year'));
+    } catch (error) {
+      return reply.code(400).send({ error: error.message });
+    }
+  }
+
+  if ('notes' in payload) {
+    if (payload.notes !== null && payload.notes !== undefined && typeof payload.notes !== 'string') {
+      return reply.code(400).send({ error: 'notes must be a string' });
+    }
+    updates.push('notes = ?');
+    params.push(payload.notes ?? null);
+  }
+
+  if ('linkedAlbumId' in payload) {
+    const linkedAlbumId = payload.linkedAlbumId;
+    if (linkedAlbumId !== null) {
+      let parsed;
+      try {
+        parsed = parseId(linkedAlbumId, 'linkedAlbumId');
+      } catch (error) {
+        return reply.code(400).send({ error: error.message });
+      }
+      const ownAlbum = db.prepare('SELECT id FROM albums WHERE id = ? AND artistId = ? AND deleted = 0').get(parsed, existing.artistId);
+      if (!ownAlbum) {
+        return reply.code(400).send({ error: 'linkedAlbumId must reference an owned album for the same artist' });
+      }
+      updates.push('linkedAlbumId = ?');
+      params.push(parsed);
+    } else {
+      updates.push('linkedAlbumId = NULL');
+    }
+  }
+
+  if (updates.length === 0) {
+    return reply.code(400).send({ error: 'No valid fields provided' });
+  }
+
+  db.prepare(`UPDATE expected_albums SET ${updates.join(', ')} WHERE id = ?`).run(...params, expectedId);
+  return db.prepare('SELECT id, artistId, title, year, notes, linkedAlbumId, createdAt FROM expected_albums WHERE id = ?').get(expectedId);
+});
+
+app.delete('/api/expected/:expectedId', async (req, reply) => {
+  let expectedId;
+  try {
+    expectedId = parseId(req.params.expectedId, 'expectedId');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  db.prepare('DELETE FROM expected_albums WHERE id = ?').run(expectedId);
+  return { ok: true };
+});
+
+app.post('/api/expected/:expectedId/link', async (req, reply) => {
+  let expectedId;
+  try {
+    expectedId = parseId(req.params.expectedId, 'expectedId');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+
+  const expected = ensureExpected(expectedId);
+  if (!expected) return reply.code(404).send({ error: 'Expected album not found' });
+
+  if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, 'albumId')) {
+    return reply.code(400).send({ error: 'albumId is required (number or null)' });
+  }
+
+  const { albumId } = req.body;
+  if (albumId === null) {
+    db.prepare('UPDATE expected_albums SET linkedAlbumId = NULL WHERE id = ?').run(expectedId);
+  } else {
+    let parsedAlbumId;
+    try {
+      parsedAlbumId = parseId(albumId, 'albumId');
+    } catch (error) {
+      return reply.code(400).send({ error: error.message });
+    }
+
+    const ownAlbum = db.prepare('SELECT id FROM albums WHERE id = ? AND artistId = ? AND deleted = 0').get(parsedAlbumId, expected.artistId);
+    if (!ownAlbum) {
+      return reply.code(400).send({ error: 'albumId must reference an owned album for the same artist' });
+    }
+    db.prepare('UPDATE expected_albums SET linkedAlbumId = ? WHERE id = ?').run(parsedAlbumId, expectedId);
+  }
+
+  return db.prepare('SELECT id, artistId, title, year, notes, linkedAlbumId, createdAt FROM expected_albums WHERE id = ?').get(expectedId);
+});
+
+// backwards-compatible endpoints
+app.post('/api/artist/:id/wanted', async (req, reply) => {
+  let artistId;
+  try {
+    artistId = parseId(req.params.id, 'artist id');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  if (!ensureArtist(artistId)) return reply.code(404).send({ error: 'Artist not found' });
+
+  const { title, year, notes } = req.body || {};
+  if (typeof title !== 'string' || !title.trim()) {
+    return reply.code(400).send({ error: 'title is required' });
+  }
+  let parsedYear;
+  try {
+    parsedYear = parseOptionalInteger(year, 'year');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  if (notes !== undefined && notes !== null && typeof notes !== 'string') {
+    return reply.code(400).send({ error: 'notes must be a string' });
+  }
+
+  const createdAt = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO expected_albums (artistId, title, year, notes, linkedAlbumId, createdAt)
+    VALUES (?, ?, ?, ?, NULL, ?)
+  `).run(artistId, title.trim(), parsedYear, notes ?? null, createdAt);
+
+  return db.prepare('SELECT id, artistId, title, year, notes, linkedAlbumId, createdAt FROM expected_albums WHERE id = ?').get(result.lastInsertRowid);
+});
+
+app.delete('/api/wanted/:wantedId', async (req, reply) => {
+  let expectedId;
+  try {
+    expectedId = parseId(req.params.wantedId, 'wantedId');
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  db.prepare('DELETE FROM expected_albums WHERE id = ?').run(expectedId);
   return { ok: true };
 });
 

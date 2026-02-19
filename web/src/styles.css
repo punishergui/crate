@@ -8,7 +8,7 @@ main, section { padding: 16px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
 .card { border: 1px solid #333; padding: 10px; background: #1a1a1a; min-height: 100px; }
 button { background: var(--accent); color: #111; border: 0; padding: 8px 10px; margin-right: 8px; font-weight: 700; }
-input { background: #222; color: #eee; border: 1px solid #444; padding: 8px; margin: 6px; }
+input, select { background: #222; color: #eee; border: 1px solid #444; padding: 8px; margin: 6px; }
 label { display: block; margin-bottom: 8px; }
 .panel { border: 1px solid #333; padding: 12px; margin-bottom: 12px; background: #171717; }
 .stats-row { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -16,3 +16,8 @@ label { display: block; margin-bottom: 8px; }
 ul { padding-left: 20px; }
 li { margin-bottom: 6px; }
 form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.badge { display: inline-block; border: 1px solid var(--accent); font-size: 14px; padding: 2px 8px; vertical-align: middle; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.row-item { border: 1px solid #2d2d2d; padding: 10px; background: #131313; }
+.row-item > div { margin-top: 8px; }
