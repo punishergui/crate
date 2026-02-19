@@ -59,6 +59,27 @@ function initDb() {
       FOREIGN KEY(albumId) REFERENCES albums(id)
     );
 
+
+    CREATE TABLE IF NOT EXISTS wanted_albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artistId INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      year INTEGER,
+      notes TEXT,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY(artistId) REFERENCES artists(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS album_aliases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artistId INTEGER NOT NULL,
+      alias TEXT NOT NULL,
+      mapsToTitle TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY(artistId) REFERENCES artists(id)
+    );
+
+
     CREATE TABLE IF NOT EXISTS scan_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       status TEXT NOT NULL DEFAULT 'idle',

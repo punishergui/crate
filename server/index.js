@@ -16,6 +16,15 @@ const scanner = new Scanner(db);
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const VERSION = process.env.GIT_SHA || pkg.version;
 
+function normalizeTitle(input) {
+  return String(input || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[.,:;'"()\[\]{}!?-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizeSettings(row) {
   return {
     accentColor: row.accentColor,
@@ -51,6 +60,85 @@ function validateSettings(payload) {
     out.libraryPath = payload.libraryPath;
   }
   return out;
+}
+
+function getArtistOverview(artistId) {
+  const owned = db.prepare(`
+    SELECT id, title, path, lastFileMtime, formatsJson, trackCount
+    FROM albums
+    WHERE artistId = ? AND deleted = 0
+    ORDER BY title
+  `).all(artistId).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+
+  const wanted = db.prepare(`
+    SELECT id, title, year, notes, createdAt
+    FROM wanted_albums
+    WHERE artistId = ?
+    ORDER BY createdAt DESC, id DESC
+  `).all(artistId);
+
+  const aliases = db.prepare(`
+    SELECT alias, mapsToTitle
+    FROM album_aliases
+    WHERE artistId = ?
+  `).all(artistId);
+
+  const aliasMap = new Map();
+  for (const item of aliases) {
+    aliasMap.set(normalizeTitle(item.alias), normalizeTitle(item.mapsToTitle));
+  }
+
+  const ownedMatchSet = new Set();
+  for (const album of owned) {
+    const normalizedOwned = normalizeTitle(album.title);
+    ownedMatchSet.add(normalizedOwned);
+    const mappedTitle = aliasMap.get(normalizedOwned);
+    if (mappedTitle) ownedMatchSet.add(mappedTitle);
+  }
+
+  let ownedMatched = 0;
+  const missing = [];
+  for (const wantedAlbum of wanted) {
+    const wantedNormalized = normalizeTitle(wantedAlbum.title);
+    if (ownedMatchSet.has(wantedNormalized)) {
+      ownedMatched += 1;
+    } else {
+      missing.push({
+        id: wantedAlbum.id,
+        title: wantedAlbum.title,
+        year: wantedAlbum.year,
+        notes: wantedAlbum.notes
+      });
+    }
+  }
+
+  const completionPct = wanted.length === 0 ? null : Math.round((ownedMatched / wanted.length) * 100);
+
+  return {
+    owned,
+    wanted,
+    missing,
+    completionPct
+  };
+}
+
+function getAllMissing(limit) {
+  const artists = db.prepare('SELECT id, name FROM artists WHERE deleted = 0').all();
+  const out = [];
+  for (const artist of artists) {
+    const overview = getArtistOverview(artist.id);
+    for (const item of overview.missing) {
+      out.push({
+        artistId: artist.id,
+        artistName: artist.name,
+        title: item.title,
+        year: item.year
+      });
+    }
+  }
+  return out
+    .sort((a, b) => a.artistName.localeCompare(b.artistName) || a.title.localeCompare(b.title))
+    .slice(0, limit);
 }
 
 app.get('/health', async () => {
@@ -96,6 +184,11 @@ app.get('/api/stats', async () => {
 });
 
 app.post('/api/scan/start', async () => {
+  const settings = getSettings();
+  return scanner.startScan(settings.libraryPath);
+});
+
+app.post('/api/scan', async () => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath);
 });
@@ -156,6 +249,78 @@ app.get('/api/library/recent', async (req) => {
     ORDER BY COALESCE(al.lastFileMtime, strftime('%s', al.firstSeen) * 1000) DESC
     LIMIT ?
   `).all(limit).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+});
+
+app.get('/api/artist/:id/overview', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  const artist = db.prepare('SELECT id, name FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+  return { artist, ...getArtistOverview(artistId) };
+});
+
+app.post('/api/artist/:id/wanted', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+
+  const { title, year, notes } = req.body || {};
+  if (typeof title !== 'string' || !title.trim()) {
+    return reply.code(400).send({ error: 'title is required' });
+  }
+  if (year !== undefined && year !== null && (!Number.isInteger(year))) {
+    return reply.code(400).send({ error: 'year must be an integer' });
+  }
+  if (notes !== undefined && notes !== null && typeof notes !== 'string') {
+    return reply.code(400).send({ error: 'notes must be a string' });
+  }
+
+  const createdAt = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO wanted_albums (artistId, title, year, notes, createdAt)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(artistId, title.trim(), year ?? null, notes ?? null, createdAt);
+
+  return db.prepare('SELECT id, artistId, title, year, notes, createdAt FROM wanted_albums WHERE id = ?').get(result.lastInsertRowid);
+});
+
+app.delete('/api/wanted/:wantedId', async (req) => {
+  db.prepare('DELETE FROM wanted_albums WHERE id = ?').run(req.params.wantedId);
+  return { ok: true };
+});
+
+app.post('/api/artist/:id/alias', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+
+  const { alias, mapsToTitle } = req.body || {};
+  if (typeof alias !== 'string' || !alias.trim()) {
+    return reply.code(400).send({ error: 'alias is required' });
+  }
+  if (typeof mapsToTitle !== 'string' || !mapsToTitle.trim()) {
+    return reply.code(400).send({ error: 'mapsToTitle is required' });
+  }
+
+  const createdAt = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO album_aliases (artistId, alias, mapsToTitle, createdAt)
+    VALUES (?, ?, ?, ?)
+  `).run(artistId, alias.trim(), mapsToTitle.trim(), createdAt);
+
+  return db.prepare('SELECT id, artistId, alias, mapsToTitle, createdAt FROM album_aliases WHERE id = ?').get(result.lastInsertRowid);
+});
+
+app.delete('/api/alias/:aliasId', async (req) => {
+  db.prepare('DELETE FROM album_aliases WHERE id = ?').run(req.params.aliasId);
+  return { ok: true };
+});
+
+app.get('/api/missing/top', async (req, reply) => {
+  const limit = Number(req.query.limit ?? 10);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    return reply.code(400).send({ error: 'limit must be an integer between 1 and 1000' });
+  }
+  return getAllMissing(limit);
 });
 
 app.register(fastifyStatic, {

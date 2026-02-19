@@ -17,12 +17,19 @@ API highlights
 - `PUT /api/settings`
 - `GET /api/stats`
 - `POST /api/scan/start`
+- `POST /api/scan` (compatibility alias for scan start)
 - `GET /api/scan/status`
 - `POST /api/scan/cancel`
 - `GET /api/library/albums`
 - `GET /api/library/artists`
 - `GET /api/library/artists/:id`
 - `GET /api/library/recent`
+- `GET /api/artist/:id/overview`
+- `POST /api/artist/:id/wanted`
+- `DELETE /api/wanted/:wantedId`
+- `POST /api/artist/:id/alias`
+- `DELETE /api/alias/:aliasId`
+- `GET /api/missing/top?limit=10`
 
 TrueNAS deployment
 Use app path `/mnt/z1/docker/crate/app` and compose file `/mnt/z1/docker/crate/compose.yml`.
@@ -60,3 +67,24 @@ services:
 Persistence
 - All app data and scanner state are in `/data/crate.sqlite`
 - Scan progress is persisted in `scan_state`, so container restarts keep progress history and scan metadata
+
+
+Phase 3 smoke checks
+```bash
+# Overview (owned + wanted + missing + completion)
+curl http://10.0.10.10:4010/api/artist/1/overview
+
+# Add wanted album
+curl -X POST http://10.0.10.10:4010/api/artist/1/wanted \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Black Album","year":1991,"notes":"manual target"}'
+
+# Add alias so owned variant maps to target title
+curl -X POST http://10.0.10.10:4010/api/artist/1/alias \
+  -H 'Content-Type: application/json' \
+  -d '{"alias":"The Black Album","mapsToTitle":"Black Album"}'
+```
+
+Reminder
+- App data (DB/cache/logs) lives under `/data`
+- Library mount should be available under `/music`

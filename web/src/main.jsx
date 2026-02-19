@@ -9,17 +9,31 @@ registerSW({ immediate: true });
 const api = {
   get: (url) => fetch(url).then((r) => r.json()),
   put: (url, body) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
-  post: (url, body = {}) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json())
+  post: (url, body = {}) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
+  del: (url) => fetch(url, { method: 'DELETE' }).then((r) => r.json())
 };
 
 function Dashboard() {
   const [stats, setStats] = React.useState();
   const [recent, setRecent] = React.useState([]);
+  const [missingTop, setMissingTop] = React.useState([]);
   React.useEffect(() => {
     api.get('/api/stats').then(setStats);
     api.get('/api/library/recent?limit=12').then(setRecent);
+    api.get('/api/missing/top?limit=200').then(setMissingTop);
   }, []);
-  return <section><h1>Dashboard</h1><p>Artists {stats?.artists ?? '-'} Albums {stats?.albums ?? '-'} Tracks {stats?.tracks ?? '-'}</p><div className="grid">{recent.map((a) => <AlbumCard key={a.id} album={a} />)}</div></section>;
+  return <section>
+    <h1>Dashboard</h1>
+    <p>Artists {stats?.artists ?? '-'} Albums {stats?.albums ?? '-'} Tracks {stats?.tracks ?? '-'}</p>
+    <div className="panel">
+      <h2>Missing albums</h2>
+      <p>Total missing items: {missingTop.length}</p>
+      <ul>
+        {missingTop.slice(0, 10).map((item, index) => <li key={`${item.artistId}-${item.title}-${index}`}><Link to={`/artist/${item.artistId}`}>{item.artistName}</Link> — {item.title}{item.year ? ` (${item.year})` : ''}</li>)}
+      </ul>
+    </div>
+    <div className="grid">{recent.map((a) => <AlbumCard key={a.id} album={a} />)}</div>
+  </section>;
 }
 
 function Collection() {
@@ -32,9 +46,79 @@ function Collection() {
 function ArtistPage() {
   const { id } = useParams();
   const [data, setData] = React.useState();
-  React.useEffect(() => { api.get(`/api/library/artists/${id}`).then(setData); }, [id]);
+  const [aliasForm, setAliasForm] = React.useState({ alias: '', mapsToTitle: '' });
+  const [wantedForm, setWantedForm] = React.useState({ title: '', year: '', notes: '' });
+
+  const load = React.useCallback(() => {
+    api.get(`/api/artist/${id}/overview`).then(setData);
+  }, [id]);
+
+  React.useEffect(() => { load(); }, [load]);
+
   if (!data) return <p>Loading</p>;
-  return <section><h1>{data.artist.name}</h1><div className="grid">{data.albums.map((a) => <AlbumCard key={a.id} album={{ ...a, artistName: data.artist.name }} />)}</div></section>;
+
+  const addWanted = async (e) => {
+    e.preventDefault();
+    const payload = {
+      title: wantedForm.title,
+      year: wantedForm.year ? Number(wantedForm.year) : null,
+      notes: wantedForm.notes || null
+    };
+    await api.post(`/api/artist/${id}/wanted`, payload);
+    setWantedForm({ title: '', year: '', notes: '' });
+    load();
+  };
+
+  const addAlias = async (e) => {
+    e.preventDefault();
+    await api.post(`/api/artist/${id}/alias`, aliasForm);
+    setAliasForm({ alias: '', mapsToTitle: '' });
+    load();
+  };
+
+  return <section>
+    <h1>{data.artist.name}</h1>
+    <div className="stats-row">
+      <span>Owned {data.owned.length}</span>
+      <span>Wanted {data.wanted.length}</span>
+      <span>Missing {data.missing.length}</span>
+      <span>Completion {data.completionPct === null ? 'n/a' : `${data.completionPct}%`}</span>
+    </div>
+
+    <div className="panel">
+      <h2>Add wanted album</h2>
+      <form onSubmit={addWanted}>
+        <input value={wantedForm.title} onChange={(e) => setWantedForm({ ...wantedForm, title: e.target.value })} placeholder="Album title" required />
+        <input value={wantedForm.year} onChange={(e) => setWantedForm({ ...wantedForm, year: e.target.value })} placeholder="Year" />
+        <input value={wantedForm.notes} onChange={(e) => setWantedForm({ ...wantedForm, notes: e.target.value })} placeholder="Notes" />
+        <button type="submit">Add Wanted</button>
+      </form>
+    </div>
+
+    <div className="panel">
+      <h2>Add alias mapping</h2>
+      <form onSubmit={addAlias}>
+        <input value={aliasForm.alias} onChange={(e) => setAliasForm({ ...aliasForm, alias: e.target.value })} placeholder="Owned title variant" required />
+        <input value={aliasForm.mapsToTitle} onChange={(e) => setAliasForm({ ...aliasForm, mapsToTitle: e.target.value })} placeholder="Maps to wanted title" required />
+        <button type="submit">Add Alias</button>
+      </form>
+    </div>
+
+    <div className="three-col">
+      <div>
+        <h2>Owned</h2>
+        <ul>{data.owned.map((a) => <li key={a.id}>{a.title} <small>({a.trackCount} tracks)</small></li>)}</ul>
+      </div>
+      <div>
+        <h2>Wanted</h2>
+        <ul>{data.wanted.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''} {a.notes ? `— ${a.notes}` : ''} <button onClick={() => api.del(`/api/wanted/${a.id}`).then(load)}>Delete</button></li>)}</ul>
+      </div>
+      <div>
+        <h2>Missing</h2>
+        <ul>{data.missing.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''} {a.notes ? `— ${a.notes}` : ''}</li>)}</ul>
+      </div>
+    </div>
+  </section>;
 }
 
 function Settings({ settings, setSettings }) {
