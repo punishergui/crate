@@ -400,7 +400,16 @@ app.post('/api/expected/artist/:id/sync', async (req, reply) => {
     return await discography.syncExpectedForArtist(artistId);
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.code(status).send({ error: error.message || 'Failed to sync expected albums' });
+    req.log.error({
+      err: error,
+      artistId,
+      statusCode: status,
+      details: error.details || null
+    }, 'expected artist sync failed');
+    return reply.code(status).send({
+      error: error.message || 'Failed to sync expected albums',
+      statusCode: status
+    });
   }
 });
 

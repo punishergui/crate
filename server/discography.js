@@ -1,6 +1,19 @@
 const { findArtistByName, fetchArtistAlbums } = require('./musicbrainz');
 const { normalizeTitle } = require('./normalize');
 
+const MUSICBRAINZ_SYNC_TIMEOUT_MS = 15000;
+
+function withTimeout(promise, label, timeoutMs = MUSICBRAINZ_SYNC_TIMEOUT_MS) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      const error = new Error(`${label} timed out after ${timeoutMs}ms`);
+      error.statusCode = 504;
+      setTimeout(() => reject(error), timeoutMs);
+    })
+  ]);
+}
+
 function createDiscographyService(db) {
   function getExpectedArtist(artistId) {
     return db.prepare('SELECT id, artistId, mbid, name, updatedAt FROM expected_artists WHERE artistId = ?').get(artistId);
@@ -21,7 +34,15 @@ function createDiscographyService(db) {
 
     return (async () => {
       if (!mbid) {
-        const found = await findArtistByName(artist.name);
+        let found;
+        try {
+          found = await withTimeout(findArtistByName(artist.name), 'MusicBrainz artist lookup');
+        } catch (error) {
+          const wrapped = new Error(`MusicBrainz artist lookup failed for "${artist.name}": ${error.message}`);
+          wrapped.statusCode = error.statusCode || 502;
+          wrapped.details = error.details || null;
+          throw wrapped;
+        }
         if (!found || !found.mbid) {
           const error = new Error(`No MusicBrainz artist found for "${artist.name}"`);
           error.statusCode = 404;
@@ -40,7 +61,15 @@ function createDiscographyService(db) {
         expectedArtist = { id: Number(inserted.lastInsertRowid), artistId, mbid, name: mbName, updatedAt: now };
       }
 
-      const albums = await fetchArtistAlbums(mbid);
+      let albums;
+      try {
+        albums = await withTimeout(fetchArtistAlbums(mbid), 'MusicBrainz release-group lookup');
+      } catch (error) {
+        const wrapped = new Error(`MusicBrainz release-group lookup failed for MBID ${mbid}: ${error.message}`);
+        wrapped.statusCode = error.statusCode || 502;
+        wrapped.details = error.details || null;
+        throw wrapped;
+      }
       const upsertWithReleaseGroup = db.prepare(`
         INSERT INTO expected_albums (expectedArtistId, mb_release_group_id, title, year, type, normalizedTitle, updatedAt)
         VALUES (?, ?, ?, ?, ?, ?, ?)
