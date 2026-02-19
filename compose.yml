@@ -2,13 +2,14 @@ services:
   crate:
     container_name: crate
     build:
-      context: ./app
-    environment:
-      TZ: America/Chicago
-      NODE_ENV: production
-      PORT: 4000
+      context: .
+      dockerfile: app/Dockerfile
+    restart: unless-stopped
     ports:
       - "4010:4000"
     volumes:
       - /mnt/z1/docker/crate/data:/app/data
-    restart: unless-stopped
+    environment:
+      TZ: America/Chicago
+      NODE_ENV: production
+      PORT: 4000
