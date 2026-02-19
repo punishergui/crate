@@ -79,6 +79,42 @@ function initDb() {
       FOREIGN KEY(artistId) REFERENCES artists(id)
     );
 
+    CREATE TABLE IF NOT EXISTS expected_artists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artistId INTEGER NOT NULL,
+      mbid TEXT UNIQUE,
+      name TEXT,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(artistId) REFERENCES artists(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS expected_albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expectedArtistId INTEGER NOT NULL,
+      mb_release_group_id TEXT,
+      title TEXT NOT NULL,
+      year INTEGER,
+      type TEXT,
+      normalizedTitle TEXT NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(expectedArtistId) REFERENCES expected_artists(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS wishlist_albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expectedAlbumId INTEGER NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'wanted',
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY(expectedAlbumId) REFERENCES expected_albums(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS album_match_overrides (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expectedAlbumId INTEGER UNIQUE,
+      ownedAlbumId INTEGER UNIQUE,
+      FOREIGN KEY(expectedAlbumId) REFERENCES expected_albums(id),
+      FOREIGN KEY(ownedAlbumId) REFERENCES albums(id)
+    );
 
     CREATE TABLE IF NOT EXISTS scan_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -91,16 +127,24 @@ function initDb() {
       scannedArtists INTEGER NOT NULL DEFAULT 0,
       error TEXT
     );
+
+    CREATE INDEX IF NOT EXISTS idx_albums_artist_deleted ON albums(artistId, deleted);
+    CREATE INDEX IF NOT EXISTS idx_expected_artists_artist_id ON expected_artists(artistId);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_expected_artists_artist_unique ON expected_artists(artistId);
+    CREATE INDEX IF NOT EXISTS idx_expected_albums_expected_artist_id ON expected_albums(expectedArtistId);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_expected_albums_release_group_unique ON expected_albums(expectedArtistId, mb_release_group_id);
+    CREATE INDEX IF NOT EXISTS idx_expected_albums_normalized_title ON expected_albums(expectedArtistId, normalizedTitle);
+    CREATE INDEX IF NOT EXISTS idx_wishlist_status ON wishlist_albums(status);
   `);
 
-  const albumColumns = db.prepare(`PRAGMA table_info(albums)`).all();
+  const albumColumns = db.prepare('PRAGMA table_info(albums)').all();
   const hasOwnedColumn = albumColumns.some((column) => column.name === 'owned');
   if (!hasOwnedColumn) {
-    db.exec(`ALTER TABLE albums ADD COLUMN owned INTEGER NOT NULL DEFAULT 1`);
+    db.exec('ALTER TABLE albums ADD COLUMN owned INTEGER NOT NULL DEFAULT 1');
   }
 
-  db.prepare(`INSERT OR IGNORE INTO settings (id) VALUES (1)`).run();
-  db.prepare(`INSERT OR IGNORE INTO scan_state (id) VALUES (1)`).run();
+  db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();
+  db.prepare('INSERT OR IGNORE INTO scan_state (id) VALUES (1)').run();
   return db;
 }
 

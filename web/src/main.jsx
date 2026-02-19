@@ -6,33 +6,61 @@ import './styles.css';
 
 registerSW({ immediate: true });
 
+async function request(url, options) {
+  const response = await fetch(url, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed: ${response.status}`);
+  }
+  return payload;
+}
+
 const api = {
-  get: (url) => fetch(url).then((r) => r.json()),
-  put: (url, body) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
-  post: (url, body = {}) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
-  del: (url) => fetch(url, { method: 'DELETE' }).then((r) => r.json())
+  get: (url) => request(url),
+  put: (url, body) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  del: (url) => request(url, { method: 'DELETE' })
 };
 
 function Dashboard() {
-  const [stats, setStats] = React.useState();
-  const [recent, setRecent] = React.useState([]);
-  const [missingTop, setMissingTop] = React.useState([]);
+  const [data, setData] = React.useState();
+  const [error, setError] = React.useState('');
+
   React.useEffect(() => {
-    api.get('/api/stats').then(setStats);
-    api.get('/api/library/recent?limit=12').then(setRecent);
-    api.get('/api/missing/top?limit=200').then(setMissingTop);
+    api.get('/api/dashboard').then(setData).catch((err) => setError(err.message));
   }, []);
+
+  if (error) return <p>{error}</p>;
+
   return <section>
     <h1>Dashboard</h1>
-    <p>Artists {stats?.artists ?? '-'} Albums {stats?.albums ?? '-'} Tracks {stats?.tracks ?? '-'}</p>
+    <p>Artists {data?.stats?.artists ?? '-'} Albums {data?.stats?.albums ?? '-'} Tracks {data?.stats?.tracks ?? '-'}</p>
     <div className="panel">
-      <h2>Missing albums</h2>
-      <p>Total missing items: {missingTop.length}</p>
-      <ul>
-        {missingTop.slice(0, 10).map((item, index) => <li key={`${item.artistId}-${item.title}-${index}`}><Link to={`/artist/${item.artistId}`}>{item.artistName}</Link> — {item.title}{item.year ? ` (${item.year})` : ''}</li>)}
-      </ul>
+      <h2>Missing Albums</h2>
+      <p>Missing total: {data?.missingTotal ?? 0}</p>
+      <p>Wishlist items: {data?.wishlistCount ?? 0}</p>
+      <Link to="/wishlist"><button>Open Wishlist</button></Link>
     </div>
-    <div className="grid">{recent.map((a) => <AlbumCard key={a.id} album={a} />)}</div>
+    <div className="grid">{(data?.recent || []).map((a) => <AlbumCard key={a.id} album={a} />)}</div>
+  </section>;
+}
+
+function WishlistPage() {
+  const [items, setItems] = React.useState([]);
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    api.get('/api/wishlist').then(setItems).catch((err) => setError(err.message));
+  }, []);
+
+  return <section>
+    <h1>Wishlist</h1>
+    {error ? <p>{error}</p> : null}
+    <ul>
+      {items.map((item) => <li key={item.id}>
+        <Link to={`/artist/${item.artistId}`}>{item.artistName}</Link> — {item.title}{item.year ? ` (${item.year})` : ''} <small>[{item.status}]</small>
+      </li>)}
+    </ul>
   </section>;
 }
 
@@ -65,7 +93,7 @@ function Collection() {
       if (ownedFilter !== 'all' && String(nextOwned ? 1 : 0) !== ownedFilter) {
         setList((prev) => ({ ...prev, items: prev.items.filter((album) => album.id !== albumId) }));
       }
-    } catch (error) {
+    } catch {
       setList((prev) => ({ ...prev, items: previous }));
     }
   };
@@ -87,62 +115,54 @@ function Collection() {
 function ArtistPage() {
   const { id } = useParams();
   const [data, setData] = React.useState();
-  const [aliasForm, setAliasForm] = React.useState({ alias: '', mapsToTitle: '' });
-  const [wantedForm, setWantedForm] = React.useState({ title: '', year: '', notes: '' });
+  const [summary, setSummary] = React.useState();
+  const [status, setStatus] = React.useState('');
 
-  const load = React.useCallback(() => {
-    api.get(`/api/artist/${id}/overview`).then(setData);
+  const load = React.useCallback(async () => {
+    const overview = await api.get(`/api/artist/${id}/overview`);
+    setData(overview);
+    try {
+      const nextSummary = await api.get(`/api/expected/artist/${id}/summary`);
+      setSummary(nextSummary);
+    } catch {
+      setSummary(null);
+    }
   }, [id]);
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => { load().catch((err) => setStatus(err.message)); }, [load]);
 
   if (!data) return <p>Loading</p>;
 
-  const addWanted = async (e) => {
-    e.preventDefault();
-    const payload = {
-      title: wantedForm.title,
-      year: wantedForm.year ? Number(wantedForm.year) : null,
-      notes: wantedForm.notes || null
-    };
-    await api.post(`/api/artist/${id}/wanted`, payload);
-    setWantedForm({ title: '', year: '', notes: '' });
-    load();
+  const syncDiscography = async () => {
+    setStatus('Syncing discography...');
+    try {
+      const nextSummary = await api.post(`/api/expected/artist/${id}/sync`);
+      setSummary(nextSummary);
+      setStatus('Discography synced');
+    } catch (error) {
+      setStatus(error.message);
+    }
   };
 
-  const addAlias = async (e) => {
-    e.preventDefault();
-    await api.post(`/api/artist/${id}/alias`, aliasForm);
-    setAliasForm({ alias: '', mapsToTitle: '' });
-    load();
+  const addToWishlist = async (expectedAlbumId) => {
+    try {
+      await api.post('/api/wishlist', { expectedAlbumId });
+      setStatus('Added to wishlist');
+    } catch (error) {
+      setStatus(error.message);
+    }
   };
 
   return <section>
     <h1>{data.artist.name}</h1>
+    <button onClick={syncDiscography}>Sync Discography</button>
+    {status ? <p>{status}</p> : null}
+
     <div className="stats-row">
-      <span>Owned {data.owned.length}</span>
-      <span>Wanted {data.wanted.length}</span>
-      <span>Missing {data.missing.length}</span>
-      <span>Completion {data.completionPct === null ? 'n/a' : `${data.completionPct}%`}</span>
-    </div>
-
-    <div className="panel">
-      <h2>Add wanted album</h2>
-      <form onSubmit={addWanted}>
-        <input value={wantedForm.title} onChange={(e) => setWantedForm({ ...wantedForm, title: e.target.value })} placeholder="Album title" required />
-        <input value={wantedForm.year} onChange={(e) => setWantedForm({ ...wantedForm, year: e.target.value })} placeholder="Year" />
-        <input value={wantedForm.notes} onChange={(e) => setWantedForm({ ...wantedForm, notes: e.target.value })} placeholder="Notes" />
-        <button type="submit">Add Wanted</button>
-      </form>
-    </div>
-
-    <div className="panel">
-      <h2>Add alias mapping</h2>
-      <form onSubmit={addAlias}>
-        <input value={aliasForm.alias} onChange={(e) => setAliasForm({ ...aliasForm, alias: e.target.value })} placeholder="Owned title variant" required />
-        <input value={aliasForm.mapsToTitle} onChange={(e) => setAliasForm({ ...aliasForm, mapsToTitle: e.target.value })} placeholder="Maps to wanted title" required />
-        <button type="submit">Add Alias</button>
-      </form>
+      <span>Owned {summary?.ownedCount ?? data.owned.length}</span>
+      <span>Expected {summary?.expectedCount ?? 0}</span>
+      <span>Missing {summary?.missingCount ?? 0}</span>
+      <span>Completion {summary?.completionPct === null || summary?.completionPct === undefined ? 'n/a' : `${summary.completionPct}%`}</span>
     </div>
 
     <div className="three-col">
@@ -151,12 +171,14 @@ function ArtistPage() {
         <ul>{data.owned.map((a) => <li key={a.id}>{a.title} <small>({a.trackCount} tracks)</small></li>)}</ul>
       </div>
       <div>
-        <h2>Wanted</h2>
-        <ul>{data.wanted.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''} {a.notes ? `— ${a.notes}` : ''} <button onClick={() => api.del(`/api/wanted/${a.id}`).then(load)}>Delete</button></li>)}</ul>
+        <h2>Expected Missing</h2>
+        <ul>{(summary?.missingAlbums || []).map((album) => <li key={album.id}>
+          {album.title}{album.year ? ` (${album.year})` : ''} <button onClick={() => addToWishlist(album.id)}>Add to Wishlist</button>
+        </li>)}</ul>
       </div>
       <div>
-        <h2>Missing</h2>
-        <ul>{data.missing.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''} {a.notes ? `— ${a.notes}` : ''}</li>)}</ul>
+        <h2>Manual Wanted</h2>
+        <ul>{data.wanted.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''}</li>)}</ul>
       </div>
     </div>
   </section>;
@@ -203,20 +225,25 @@ function AlbumCard({ album, onToggleOwned }) {
 
 function App() {
   const [settings, setSettings] = React.useState();
+  const [artists, setArtists] = React.useState([]);
   React.useEffect(() => { api.get('/api/settings').then(setSettings); }, []);
+  React.useEffect(() => { api.get('/api/library/artists').then(setArtists).catch(() => setArtists([])); }, []);
+  const firstArtistId = artists[0]?.id;
 
   return (
     <div className={settings?.noiseOverlay ? 'app noise' : 'app'} style={{ '--accent': settings?.accentColor || '#FF6A00' }}>
       <nav>
         <Link to="/">Dashboard</Link>
         <Link to="/collection">Collection</Link>
+        <Link to="/wishlist">Wishlist</Link>
         <Link to="/settings">Settings</Link>
-        <Link to="/artist/1">Artist</Link>
+        {firstArtistId ? <Link to={`/artist/${firstArtistId}`}>Artist</Link> : null}
       </nav>
       <main>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/collection" element={<Collection />} />
+          <Route path="/wishlist" element={<WishlistPage />} />
           <Route path="/artist/:id" element={<ArtistPage />} />
           <Route path="/settings" element={<Settings settings={settings} setSettings={setSettings} />} />
         </Routes>
