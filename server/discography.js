@@ -145,6 +145,12 @@ function createDiscographyService(db) {
     }
 
     const overrideMap = new Map(overrides.map((row) => [row.expectedAlbumId, row.ownedAlbumId]));
+    const expectedNormalizedTitles = new Set(expectedAlbums.map((album) => album.normalizedTitle));
+    const overrideOwnedIds = new Set(
+      overrides
+        .map((row) => row.ownedAlbumId)
+        .filter((ownedAlbumId) => Number.isInteger(ownedAlbumId) && ownedAlbumId > 0)
+    );
 
     let matchedCount = 0;
     const missingAlbums = [];
@@ -163,13 +169,25 @@ function createDiscographyService(db) {
     const missingCount = missingAlbums.length;
     const completionPct = expectedCount === 0 ? null : Math.round((matchedCount / expectedCount) * 100);
 
+    const matchedOwnedAlbums = ownedAlbums.filter((ownedAlbum) => {
+      const normalizedOwnedTitle = normalizeTitle(ownedAlbum.title);
+      return overrideOwnedIds.has(ownedAlbum.id) || expectedNormalizedTitles.has(normalizedOwnedTitle);
+    });
+    const unmatchedOwnedAlbums = ownedAlbums.filter((ownedAlbum) => {
+      const normalizedOwnedTitle = normalizeTitle(ownedAlbum.title);
+      return !overrideOwnedIds.has(ownedAlbum.id) && !expectedNormalizedTitles.has(normalizedOwnedTitle);
+    });
+
     return {
       artist,
       ownedCount: ownedAlbums.length,
       expectedCount,
       missingCount,
       completionPct,
-      missingAlbums
+      missingAlbums,
+      matchedOwnedCount: matchedOwnedAlbums.length,
+      matchedOwnedAlbums,
+      unmatchedOwnedAlbums
     };
   }
 
