@@ -25,8 +25,14 @@ API highlights
 - `GET /api/library/artists/:id`
 - `GET /api/library/recent`
 - `GET /api/artist/:id/overview`
-- `POST /api/artist/:id/wanted`
-- `DELETE /api/wanted/:wantedId`
+- `POST /api/artist/:id/wanted` (compatibility alias to expected albums)
+- `DELETE /api/wanted/:wantedId` (compatibility alias to expected albums)
+- `GET /api/library/artists/:id/owned-missing`
+- `GET /api/artists/:id/expected`
+- `POST /api/artists/:id/expected`
+- `PUT /api/expected/:expectedId`
+- `DELETE /api/expected/:expectedId`
+- `POST /api/expected/:expectedId/link`
 - `POST /api/artist/:id/alias`
 - `DELETE /api/alias/:aliasId`
 - `GET /api/missing/top?limit=10`
@@ -71,18 +77,22 @@ Persistence
 
 Phase 3 smoke checks
 ```bash
-# Overview (owned + wanted + missing + completion)
-curl http://10.0.10.10:4010/api/artist/1/overview
+curl http://localhost:4000/api/stats
+curl http://localhost:4000/api/library/artists/1
+curl http://localhost:4000/api/library/artists/1/owned-missing
 
-# Add wanted album
-curl -X POST http://10.0.10.10:4010/api/artist/1/wanted \
+# Add an expected album manually
+curl -X POST http://localhost:4000/api/artists/1/expected \
   -H 'Content-Type: application/json' \
   -d '{"title":"Black Album","year":1991,"notes":"manual target"}'
 
-# Add alias so owned variant maps to target title
-curl -X POST http://10.0.10.10:4010/api/artist/1/alias \
+# Optional manual link override (use owned album id, or null to unlink)
+curl -X POST http://localhost:4000/api/expected/1/link \
   -H 'Content-Type: application/json' \
-  -d '{"alias":"The Black Album","mapsToTitle":"Black Album"}'
+  -d '{"albumId":123}'
+
+# Re-check completion + missing
+curl http://localhost:4000/api/library/artists/1/owned-missing
 ```
 
 Reminder

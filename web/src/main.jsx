@@ -43,80 +43,101 @@ function Collection() {
   return <section><h1>Collection</h1><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search albums or artists" /><div className="grid">{list.items.map((a) => <AlbumCard key={a.id} album={a} />)}</div></section>;
 }
 
+function ArtistsPage() {
+  const [artists, setArtists] = React.useState([]);
+  React.useEffect(() => { api.get('/api/library/artists').then(setArtists); }, []);
+
+  return <section>
+    <h1>Artists</h1>
+    <div className="panel">
+      <ul>
+        {artists.map((artist) => <li key={artist.id}><Link to={`/artist/${artist.id}`}>{artist.name}</Link></li>)}
+      </ul>
+    </div>
+  </section>;
+}
+
 function ArtistPage() {
   const { id } = useParams();
   const [data, setData] = React.useState();
-  const [aliasForm, setAliasForm] = React.useState({ alias: '', mapsToTitle: '' });
-  const [wantedForm, setWantedForm] = React.useState({ title: '', year: '', notes: '' });
+  const [form, setForm] = React.useState({ title: '', year: '', notes: '' });
+  const [linkDraft, setLinkDraft] = React.useState({});
 
   const load = React.useCallback(() => {
-    api.get(`/api/artist/${id}/overview`).then(setData);
+    api.get(`/api/library/artists/${id}/owned-missing`).then(setData);
   }, [id]);
 
   React.useEffect(() => { load(); }, [load]);
 
   if (!data) return <p>Loading</p>;
 
-  const addWanted = async (e) => {
+  const addExpected = async (e) => {
     e.preventDefault();
-    const payload = {
-      title: wantedForm.title,
-      year: wantedForm.year ? Number(wantedForm.year) : null,
-      notes: wantedForm.notes || null
-    };
-    await api.post(`/api/artist/${id}/wanted`, payload);
-    setWantedForm({ title: '', year: '', notes: '' });
+    await api.post(`/api/artists/${id}/expected`, {
+      title: form.title,
+      year: form.year ? Number(form.year) : null,
+      notes: form.notes || null
+    });
+    setForm({ title: '', year: '', notes: '' });
     load();
   };
 
-  const addAlias = async (e) => {
-    e.preventDefault();
-    await api.post(`/api/artist/${id}/alias`, aliasForm);
-    setAliasForm({ alias: '', mapsToTitle: '' });
+  const removeExpected = async (expectedId) => {
+    await api.del(`/api/expected/${expectedId}`);
+    load();
+  };
+
+  const setLink = async (expectedId) => {
+    const selected = linkDraft[expectedId];
+    const albumId = selected ? Number(selected) : null;
+    await api.post(`/api/expected/${expectedId}/link`, { albumId });
     load();
   };
 
   return <section>
-    <h1>{data.artist.name}</h1>
-    <div className="stats-row">
-      <span>Owned {data.owned.length}</span>
-      <span>Wanted {data.wanted.length}</span>
-      <span>Missing {data.missing.length}</span>
-      <span>Completion {data.completionPct === null ? 'n/a' : `${data.completionPct}%`}</span>
+    <h1>{data.artist.name} <span className="badge">{data.completion.percent === null ? 'n/a' : `${data.completion.percent}% complete`}</span></h1>
+
+    <div className="two-col">
+      <div className="panel">
+        <h2>Owned ({data.ownedAlbums.length})</h2>
+        <div className="stack">
+          {data.ownedAlbums.map((album) => (
+            <article key={album.id} className="row-item">
+              <strong>{album.title}</strong>
+              <small>{(album.formats || []).join(', ') || 'unknown format'} • {album.trackCount} tracks</small>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Missing ({data.missing.length})</h2>
+        <div className="stack">
+          {data.missing.map((item) => (
+            <article key={item.id} className="row-item">
+              <strong>{item.title}{item.year ? ` (${item.year})` : ''}</strong>
+              <div>
+                <select value={linkDraft[item.id] || ''} onChange={(e) => setLinkDraft({ ...linkDraft, [item.id]: e.target.value })}>
+                  <option value="">Select owned album</option>
+                  {data.ownedAlbums.map((owned) => <option key={owned.id} value={owned.id}>{owned.title}</option>)}
+                </select>
+                <button onClick={() => setLink(item.id)}>Link to owned album</button>
+                <button onClick={() => removeExpected(item.id)}>Remove expected</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
     </div>
 
     <div className="panel">
-      <h2>Add wanted album</h2>
-      <form onSubmit={addWanted}>
-        <input value={wantedForm.title} onChange={(e) => setWantedForm({ ...wantedForm, title: e.target.value })} placeholder="Album title" required />
-        <input value={wantedForm.year} onChange={(e) => setWantedForm({ ...wantedForm, year: e.target.value })} placeholder="Year" />
-        <input value={wantedForm.notes} onChange={(e) => setWantedForm({ ...wantedForm, notes: e.target.value })} placeholder="Notes" />
-        <button type="submit">Add Wanted</button>
+      <h2>Add expected album</h2>
+      <form onSubmit={addExpected}>
+        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Album title" required />
+        <input value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} placeholder="Year (optional)" />
+        <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes (optional)" />
+        <button type="submit">Add expected</button>
       </form>
-    </div>
-
-    <div className="panel">
-      <h2>Add alias mapping</h2>
-      <form onSubmit={addAlias}>
-        <input value={aliasForm.alias} onChange={(e) => setAliasForm({ ...aliasForm, alias: e.target.value })} placeholder="Owned title variant" required />
-        <input value={aliasForm.mapsToTitle} onChange={(e) => setAliasForm({ ...aliasForm, mapsToTitle: e.target.value })} placeholder="Maps to wanted title" required />
-        <button type="submit">Add Alias</button>
-      </form>
-    </div>
-
-    <div className="three-col">
-      <div>
-        <h2>Owned</h2>
-        <ul>{data.owned.map((a) => <li key={a.id}>{a.title} <small>({a.trackCount} tracks)</small></li>)}</ul>
-      </div>
-      <div>
-        <h2>Wanted</h2>
-        <ul>{data.wanted.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''} {a.notes ? `— ${a.notes}` : ''} <button onClick={() => api.del(`/api/wanted/${a.id}`).then(load)}>Delete</button></li>)}</ul>
-      </div>
-      <div>
-        <h2>Missing</h2>
-        <ul>{data.missing.map((a) => <li key={a.id}>{a.title}{a.year ? ` (${a.year})` : ''} {a.notes ? `— ${a.notes}` : ''}</li>)}</ul>
-      </div>
     </div>
   </section>;
 }
@@ -149,7 +170,7 @@ function Settings({ settings, setSettings }) {
 }
 
 function AlbumCard({ album }) {
-  return <article className="card"><h3>{album.title}</h3><p>{album.artistName}</p><small>{(album.formats || []).join(', ')}</small></article>;
+  return <article className="card"><h3>{album.title}</h3><p><Link to={`/artist/${album.artistId}`}>{album.artistName}</Link></p><small>{(album.formats || []).join(', ')}</small></article>;
 }
 
 function App() {
@@ -161,13 +182,14 @@ function App() {
       <nav>
         <Link to="/">Dashboard</Link>
         <Link to="/collection">Collection</Link>
+        <Link to="/artists">Artists</Link>
         <Link to="/settings">Settings</Link>
-        <Link to="/artist/1">Artist</Link>
       </nav>
       <main>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/collection" element={<Collection />} />
+          <Route path="/artists" element={<ArtistsPage />} />
           <Route path="/artist/:id" element={<ArtistPage />} />
           <Route path="/settings" element={<Settings settings={settings} setSettings={setSettings} />} />
         </Routes>

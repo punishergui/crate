@@ -91,10 +91,46 @@ function initDb() {
       scannedArtists INTEGER NOT NULL DEFAULT 0,
       error TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS expected_albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artistId INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      year INTEGER,
+      notes TEXT,
+      linkedAlbumId INTEGER,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY(artistId) REFERENCES artists(id),
+      FOREIGN KEY(linkedAlbumId) REFERENCES albums(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS artist_tracking (
+      artistId INTEGER PRIMARY KEY,
+      isTracked INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY(artistId) REFERENCES artists(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_expected_albums_artist_id ON expected_albums(artistId);
   `);
 
   db.prepare(`INSERT OR IGNORE INTO settings (id) VALUES (1)`).run();
   db.prepare(`INSERT OR IGNORE INTO scan_state (id) VALUES (1)`).run();
+
+  db.exec(`
+    INSERT INTO expected_albums (artistId, title, year, notes, linkedAlbumId, createdAt)
+    SELECT wa.artistId, wa.title, wa.year, wa.notes, NULL, wa.createdAt
+    FROM wanted_albums wa
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM expected_albums ea
+      WHERE ea.artistId = wa.artistId
+        AND ea.title = wa.title
+        AND COALESCE(ea.year, -1) = COALESCE(wa.year, -1)
+        AND COALESCE(ea.notes, '') = COALESCE(wa.notes, '')
+        AND ea.createdAt = wa.createdAt
+    );
+  `);
+
   return db;
 }
 
