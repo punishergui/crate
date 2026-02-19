@@ -146,6 +146,27 @@ function getRecent(limit) {
   `).all(limit).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
 }
 
+
+function clearLibraryState() {
+  db.transaction(() => {
+    db.prepare('DELETE FROM album_match_overrides').run();
+    db.prepare('DELETE FROM wishlist_albums').run();
+    db.prepare('DELETE FROM expected_albums').run();
+    db.prepare('DELETE FROM expected_artists').run();
+    db.prepare('DELETE FROM tracks').run();
+    db.prepare('DELETE FROM albums').run();
+    db.prepare('DELETE FROM wanted_albums').run();
+    db.prepare('DELETE FROM album_aliases').run();
+    db.prepare('DELETE FROM artists').run();
+    db.prepare(`
+      UPDATE scan_state
+      SET status = 'idle', startedAt = NULL, finishedAt = NULL, currentPath = NULL,
+          scannedFiles = 0, scannedAlbums = 0, scannedArtists = 0, error = NULL
+      WHERE id = 1
+    `).run();
+  })();
+}
+
 function getStats() {
   const artists = db.prepare('SELECT COUNT(*) AS c FROM artists WHERE deleted = 0').get().c;
   const albums = db.prepare('SELECT COUNT(*) AS c FROM albums WHERE deleted = 0').get().c;
@@ -203,6 +224,18 @@ app.post('/api/scan', async () => {
 app.get('/api/scan/status', async () => scanner.getStatus());
 
 app.post('/api/scan/cancel', async () => ({ cancelled: scanner.requestCancel(), status: scanner.getStatus() }));
+
+
+app.post('/api/library/rebuild', async (req, reply) => {
+  if (scanner.running) {
+    return reply.code(409).send({ error: 'scan already running' });
+  }
+
+  clearLibraryState();
+  const settings = getSettings();
+  scanner.startScan(settings.libraryPath);
+  return { ok: true };
+});
 
 app.get('/api/library/albums', async (req, reply) => {
   const page = Math.max(1, Number(req.query.page || 1));
