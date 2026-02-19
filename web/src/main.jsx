@@ -38,9 +38,50 @@ function Dashboard() {
 
 function Collection() {
   const [q, setQ] = React.useState('');
+  const [ownedFilter, setOwnedFilter] = React.useState('1');
   const [list, setList] = React.useState({ items: [], total: 0 });
-  React.useEffect(() => { api.get(`/api/library/albums?search=${encodeURIComponent(q)}&page=1&pageSize=60`).then(setList); }, [q]);
-  return <section><h1>Collection</h1><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search albums or artists" /><div className="grid">{list.items.map((a) => <AlbumCard key={a.id} album={a} />)}</div></section>;
+
+  const load = React.useCallback(() => {
+    const ownedQuery = ownedFilter === 'all' ? '' : `&owned=${ownedFilter}`;
+    api.get(`/api/library/albums?search=${encodeURIComponent(q)}&page=1&pageSize=60${ownedQuery}`).then(setList);
+  }, [ownedFilter, q]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const toggleOwned = async (albumId, nextOwned) => {
+    const previous = list.items;
+    setList((prev) => ({
+      ...prev,
+      items: prev.items.map((album) => (album.id === albumId ? { ...album, owned: nextOwned } : album))
+    }));
+
+    try {
+      const updated = await api.put(`/api/library/albums/${albumId}/owned`, { owned: nextOwned });
+      setList((prev) => ({
+        ...prev,
+        items: prev.items.map((album) => (album.id === albumId ? { ...album, ...updated } : album))
+      }));
+
+      if (ownedFilter !== 'all' && String(nextOwned ? 1 : 0) !== ownedFilter) {
+        setList((prev) => ({ ...prev, items: prev.items.filter((album) => album.id !== albumId) }));
+      }
+    } catch (error) {
+      setList((prev) => ({ ...prev, items: previous }));
+    }
+  };
+
+  return <section>
+    <h1>Collection</h1>
+    <div className="toolbar">
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search albums or artists" />
+      <div className="toggle-group" role="group" aria-label="Owned filter">
+        <button className={ownedFilter === '1' ? 'active' : ''} onClick={() => setOwnedFilter('1')}>Owned</button>
+        <button className={ownedFilter === '0' ? 'active' : ''} onClick={() => setOwnedFilter('0')}>Missing</button>
+        <button className={ownedFilter === 'all' ? 'active' : ''} onClick={() => setOwnedFilter('all')}>All</button>
+      </div>
+    </div>
+    <div className="grid">{list.items.map((a) => <AlbumCard key={a.id} album={a} onToggleOwned={toggleOwned} />)}</div>
+  </section>;
 }
 
 function ArtistPage() {
@@ -148,8 +189,16 @@ function Settings({ settings, setSettings }) {
   </section>;
 }
 
-function AlbumCard({ album }) {
-  return <article className="card"><h3>{album.title}</h3><p>{album.artistName}</p><small>{(album.formats || []).join(', ')}</small></article>;
+function AlbumCard({ album, onToggleOwned }) {
+  return <article className="card">
+    <div className="card-header">
+      <h3>{album.title}</h3>
+      <span className={`badge ${album.owned ? 'owned' : 'missing'}`}>{album.owned ? 'Owned' : 'Missing'}</span>
+    </div>
+    <p>{album.artistName}</p>
+    <small>{(album.formats || []).join(', ')}</small>
+    {onToggleOwned ? <div className="card-actions"><button onClick={() => onToggleOwned(album.id, !album.owned)}>{album.owned ? 'Mark Missing' : 'Mark Owned'}</button></div> : null}
+  </article>;
 }
 
 function App() {

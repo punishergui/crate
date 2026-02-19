@@ -25,7 +25,11 @@ jobs:
       - name: Build (web)
         working-directory: web
         run: |
-          npm ci
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
           npm run build
 
       - name: Smoke test (server loads)

@@ -197,23 +197,33 @@ app.get('/api/scan/status', async () => scanner.getStatus());
 
 app.post('/api/scan/cancel', async () => ({ cancelled: scanner.requestCancel(), status: scanner.getStatus() }));
 
-app.get('/api/library/albums', async (req) => {
+app.get('/api/library/albums', async (req, reply) => {
   const page = Math.max(1, Number(req.query.page || 1));
   const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize || 24)));
   const search = String(req.query.search || '').trim();
+  const ownedParam = req.query.owned;
   const offset = (page - 1) * pageSize;
 
-  const where = search ? 'AND (al.title LIKE @q OR ar.name LIKE @q)' : '';
+  let ownedFilter = '';
+  if (ownedParam === '1') {
+    ownedFilter = 'AND al.owned = 1';
+  } else if (ownedParam === '0') {
+    ownedFilter = 'AND al.owned = 0';
+  } else if (ownedParam !== undefined) {
+    return reply.code(400).send({ error: 'owned must be 0 or 1 when provided' });
+  }
+
+  const where = `${ownedFilter} ${search ? 'AND (al.title LIKE @q OR ar.name LIKE @q)' : ''}`;
   const params = search ? { q: `%${search}%`, limit: pageSize, offset } : { limit: pageSize, offset };
 
   const items = db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, ar.id AS artistId, ar.name AS artistName
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
     WHERE al.deleted = 0 ${where}
     ORDER BY al.lastFileMtime DESC, al.id DESC
     LIMIT @limit OFFSET @offset
-  `).all(params).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+  `).all(params).map((row) => ({ ...row, owned: Boolean(row.owned), formats: JSON.parse(row.formatsJson || '[]') }));
 
   const total = db.prepare(`
     SELECT COUNT(*) AS c
@@ -223,6 +233,31 @@ app.get('/api/library/albums', async (req) => {
   `).get(search ? { q: `%${search}%` } : {}).c;
 
   return { items, total };
+});
+
+app.put('/api/library/albums/:id/owned', async (req, reply) => {
+  const albumId = Number(req.params.id);
+  if (!Number.isInteger(albumId) || albumId < 1) {
+    return reply.code(400).send({ error: 'invalid album id' });
+  }
+
+  const { owned } = req.body || {};
+  if (typeof owned !== 'boolean') {
+    return reply.code(400).send({ error: 'owned must be boolean' });
+  }
+
+  const result = db.prepare('UPDATE albums SET owned = ? WHERE id = ? AND deleted = 0').run(owned ? 1 : 0, albumId);
+  if (result.changes === 0) {
+    return reply.code(404).send({ error: 'Album not found' });
+  }
+
+  const row = db.prepare(`
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName
+    FROM albums al
+    JOIN artists ar ON ar.id = al.artistId
+    WHERE al.id = ?
+  `).get(albumId);
+  return { ...row, owned: Boolean(row.owned), formats: JSON.parse(row.formatsJson || '[]') };
 });
 
 app.get('/api/library/artists', async () => {
