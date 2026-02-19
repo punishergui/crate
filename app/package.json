@@ -1,0 +1,13 @@
+{
+  "name": "crate",
+  "version": "0.1.0",
+  "description": "Crate Phase 0 web app",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20 <23"
+  }
+}
