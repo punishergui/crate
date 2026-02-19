@@ -30,6 +30,12 @@ API highlights
 - `POST /api/artist/:id/alias`
 - `DELETE /api/alias/:aliasId`
 - `GET /api/missing/top?limit=10`
+- `POST /api/expected/artist/:id/sync`
+- `GET /api/expected/artist/:id/summary`
+- `GET /api/expected/artist/:id/missing`
+- `POST /api/wishlist`
+- `GET /api/wishlist`
+- `GET /api/dashboard`
 
 TrueNAS deployment
 Use app path `/mnt/z1/docker/crate/app` and compose file `/mnt/z1/docker/crate/compose.yml`.
@@ -68,21 +74,29 @@ Persistence
 - All app data and scanner state are in `/data/crate.sqlite`
 - Scan progress is persisted in `scan_state`, so container restarts keep progress history and scan metadata
 
+## Phase 3: Owned vs Missing
+Discography expectations are now synced from MusicBrainz and cached in SQLite (`expected_artists`, `expected_albums`, `wishlist_albums`). Syncing is per artist and uses a 1 req/sec queue on the server.
 
-Phase 3 smoke checks
 ```bash
-# Overview (owned + wanted + missing + completion)
-curl http://10.0.10.10:4010/api/artist/1/overview
+# Sync expected discography for artist 1
+curl -X POST http://10.0.10.10:4010/api/expected/artist/1/sync
 
-# Add wanted album
-curl -X POST http://10.0.10.10:4010/api/artist/1/wanted \
-  -H 'Content-Type: application/json' \
-  -d '{"title":"Black Album","year":1991,"notes":"manual target"}'
+# Check owned vs expected summary without forcing sync
+curl http://10.0.10.10:4010/api/expected/artist/1/summary
 
-# Add alias so owned variant maps to target title
-curl -X POST http://10.0.10.10:4010/api/artist/1/alias \
+# List missing expected albums for artist 1
+curl http://10.0.10.10:4010/api/expected/artist/1/missing
+
+# Add expected album 42 to wishlist
+curl -X POST http://10.0.10.10:4010/api/wishlist \
   -H 'Content-Type: application/json' \
-  -d '{"alias":"The Black Album","mapsToTitle":"Black Album"}'
+  -d '{"expectedAlbumId":42}'
+
+# List wishlist with artist metadata
+curl http://10.0.10.10:4010/api/wishlist
+
+# Dashboard payload includes stats + recent + missingTotal + wishlistCount
+curl http://10.0.10.10:4010/api/dashboard
 ```
 
 Reminder

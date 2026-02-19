@@ -4,6 +4,8 @@ const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 const { initDb } = require('./db');
 const { Scanner } = require('./scanner');
+const { normalizeTitle } = require('./normalize');
+const { createDiscographyService } = require('./discography');
 
 const APP_NAME = 'crate';
 const PORT = Number(process.env.PORT || 4000);
@@ -12,18 +14,10 @@ const HOST = '0.0.0.0';
 const app = Fastify({ logger: true });
 const db = initDb();
 const scanner = new Scanner(db);
+const discography = createDiscographyService(db);
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const VERSION = process.env.GIT_SHA || pkg.version;
-
-function normalizeTitle(input) {
-  return String(input || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[.,:;'"()\[\]{}!?-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 function normalizeSettings(row) {
   return {
@@ -141,6 +135,25 @@ function getAllMissing(limit) {
     .slice(0, limit);
 }
 
+function getRecent(limit) {
+  return db.prepare(`
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName
+    FROM albums al
+    JOIN artists ar ON ar.id = al.artistId
+    WHERE al.deleted = 0
+    ORDER BY COALESCE(al.lastFileMtime, strftime('%s', al.firstSeen) * 1000) DESC
+    LIMIT ?
+  `).all(limit).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+}
+
+function getStats() {
+  const artists = db.prepare('SELECT COUNT(*) AS c FROM artists WHERE deleted = 0').get().c;
+  const albums = db.prepare('SELECT COUNT(*) AS c FROM albums WHERE deleted = 0').get().c;
+  const tracks = db.prepare('SELECT COUNT(*) AS c FROM tracks WHERE deleted = 0').get().c;
+  const lastScanAt = db.prepare('SELECT lastScanAt FROM settings WHERE id = 1').get().lastScanAt;
+  return { artists, albums, tracks, lastScanAt: lastScanAt || null };
+}
+
 app.get('/health', async () => {
   const settings = getSettings();
   let dbOk = true;
@@ -175,13 +188,7 @@ app.put('/api/settings', async (req, reply) => {
   }
 });
 
-app.get('/api/stats', async () => {
-  const artists = db.prepare('SELECT COUNT(*) AS c FROM artists WHERE deleted = 0').get().c;
-  const albums = db.prepare('SELECT COUNT(*) AS c FROM albums WHERE deleted = 0').get().c;
-  const tracks = db.prepare('SELECT COUNT(*) AS c FROM tracks WHERE deleted = 0').get().c;
-  const lastScanAt = db.prepare('SELECT lastScanAt FROM settings WHERE id = 1').get().lastScanAt;
-  return { artists, albums, tracks, lastScanAt: lastScanAt || null };
-});
+app.get('/api/stats', async () => getStats());
 
 app.post('/api/scan/start', async () => {
   const settings = getSettings();
@@ -276,14 +283,7 @@ app.get('/api/library/artists/:id', async (req, reply) => {
 
 app.get('/api/library/recent', async (req) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
-  return db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName
-    FROM albums al
-    JOIN artists ar ON ar.id = al.artistId
-    WHERE al.deleted = 0
-    ORDER BY COALESCE(al.lastFileMtime, strftime('%s', al.firstSeen) * 1000) DESC
-    LIMIT ?
-  `).all(limit).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
+  return getRecent(limit);
 });
 
 app.get('/api/artist/:id/overview', async (req, reply) => {
@@ -356,6 +356,97 @@ app.get('/api/missing/top', async (req, reply) => {
     return reply.code(400).send({ error: 'limit must be an integer between 1 and 1000' });
   }
   return getAllMissing(limit);
+});
+
+app.post('/api/expected/artist/:id/sync', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  try {
+    return await discography.syncExpectedForArtist(artistId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to sync expected albums' });
+  }
+});
+
+app.get('/api/expected/artist/:id/summary', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  try {
+    return discography.computeSummary(artistId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to compute summary' });
+  }
+});
+
+app.get('/api/expected/artist/:id/missing', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  try {
+    return discography.getMissingAlbums(artistId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to fetch missing albums' });
+  }
+});
+
+app.post('/api/wishlist', async (req, reply) => {
+  const expectedAlbumId = Number(req.body?.expectedAlbumId);
+  if (!Number.isInteger(expectedAlbumId) || expectedAlbumId < 1) {
+    return reply.code(400).send({ error: 'expectedAlbumId must be a positive integer' });
+  }
+
+  const album = db.prepare('SELECT id FROM expected_albums WHERE id = ?').get(expectedAlbumId);
+  if (!album) {
+    return reply.code(404).send({ error: 'Expected album not found' });
+  }
+
+  const createdAt = Date.now();
+  db.prepare(`
+    INSERT INTO wishlist_albums (expectedAlbumId, status, createdAt)
+    VALUES (?, 'wanted', ?)
+    ON CONFLICT(expectedAlbumId) DO NOTHING
+  `).run(expectedAlbumId, createdAt);
+
+  return db.prepare('SELECT id, expectedAlbumId, status, createdAt FROM wishlist_albums WHERE expectedAlbumId = ?').get(expectedAlbumId);
+});
+
+app.get('/api/wishlist', async () => {
+  return db.prepare(`
+    SELECT w.id, w.status, w.createdAt, ea.id AS expectedAlbumId, ea.title, ea.year, ar.id AS artistId, ar.name AS artistName
+    FROM wishlist_albums w
+    JOIN expected_albums ea ON ea.id = w.expectedAlbumId
+    JOIN expected_artists er ON er.id = ea.expectedArtistId
+    JOIN artists ar ON ar.id = er.artistId
+    ORDER BY w.createdAt DESC, w.id DESC
+  `).all();
+});
+
+app.get('/api/dashboard', async () => {
+  const stats = getStats();
+  const recent = getRecent(12);
+
+  const syncedArtists = db.prepare('SELECT artistId FROM expected_artists').all();
+  let missingTotal = 0;
+  for (const row of syncedArtists) {
+    try {
+      const summary = discography.computeSummary(row.artistId);
+      missingTotal += summary.missingCount;
+    } catch {
+      // Ignore missing artists that may have been deleted.
+    }
+  }
+
+  const wishlistCount = db.prepare('SELECT COUNT(*) AS c FROM wishlist_albums').get().c;
+
+  return { stats, recent, missingTotal, wishlistCount };
 });
 
 app.register(fastifyStatic, {
