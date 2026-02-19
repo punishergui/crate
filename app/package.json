@@ -1,7 +1,7 @@
 {
   "name": "crate",
   "version": "0.1.0",
-  "description": "Crate Phase 0 web app",
+  "description": "Crate Phase 1 MVP app",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

@@ -2,6 +2,8 @@ FROM node:20.18.0-alpine3.20
 
 WORKDIR /app
 
+RUN apk add --no-cache sqlite
+
 COPY package.json server.js ./
 
 ENV NODE_ENV=production
