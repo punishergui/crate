@@ -1,7 +1,7 @@
 {
   "name": "crate",
   "version": "0.1.0",
-  "description": "Crate Phase 1 MVP app",
+  "description": "Crate minimal API for TrueNAS SCALE and Dockge",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

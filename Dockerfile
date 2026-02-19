@@ -1,13 +1,13 @@
-FROM node:20.18.0-alpine3.20
+FROM node:20-alpine
 
 WORKDIR /app
-
-RUN apk add --no-cache sqlite
 
 COPY package.json server.js ./
 
 ENV NODE_ENV=production
 ENV PORT=4000
+
+RUN mkdir -p /app/data
 
 EXPOSE 4000
 
