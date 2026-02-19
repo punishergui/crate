@@ -93,6 +93,12 @@ function initDb() {
     );
   `);
 
+  const albumColumns = db.prepare(`PRAGMA table_info(albums)`).all();
+  const hasOwnedColumn = albumColumns.some((column) => column.name === 'owned');
+  if (!hasOwnedColumn) {
+    db.exec(`ALTER TABLE albums ADD COLUMN owned INTEGER NOT NULL DEFAULT 1`);
+  }
+
   db.prepare(`INSERT OR IGNORE INTO settings (id) VALUES (1)`).run();
   db.prepare(`INSERT OR IGNORE INTO scan_state (id) VALUES (1)`).run();
   return db;

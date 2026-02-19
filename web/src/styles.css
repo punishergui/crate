@@ -16,3 +16,13 @@ label { display: block; margin-bottom: 8px; }
 ul { padding-left: 20px; }
 li { margin-bottom: 6px; }
 form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toggle-group { display: flex; gap: 6px; }
+.toggle-group button { opacity: 0.8; }
+.toggle-group button.active { outline: 2px solid #fff; opacity: 1; }
+.card-header { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+.badge { font-size: 12px; border-radius: 999px; padding: 2px 8px; font-weight: 700; }
+.badge.owned { background: #166534; color: #dcfce7; }
+.badge.missing { background: #991b1b; color: #fee2e2; }
+.card-actions { margin-top: 10px; }
