@@ -2,13 +2,14 @@ services:
   crate:
     container_name: crate
     build:
-      context: /mnt/z1/docker/crate/app
+      context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "4010:4000"
     volumes:
-      - /mnt/z1/docker/crate/data:/app/data
+      - /mnt/z1/docker/crate/data:/data
+      - /mnt/z1/media/music:/music:ro
     environment:
       NODE_ENV: production
       PORT: 4000
