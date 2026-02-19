@@ -1,13 +1,24 @@
 {
   "name": "crate",
-  "version": "0.1.0",
-  "description": "Crate minimal API for TrueNAS SCALE and Dockge",
-  "main": "server.js",
+  "version": "0.2.0",
+  "description": "CRATE single-container app for TrueNAS SCALE and Dockge",
+  "main": "server/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "dev": "concurrently \"npm --prefix web run dev\" \"nodemon server/index.js\"",
+    "build": "npm --prefix web install && npm --prefix web run build",
+    "start": "node server/index.js"
   },
   "engines": {
     "node": ">=20 <23"
+  },
+  "dependencies": {
+    "@fastify/static": "^7.0.4",
+    "better-sqlite3": "^11.7.0",
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "nodemon": "^3.1.7"
   }
 }
