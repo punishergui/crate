@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { slugifyArtistName, shortHash } = require('./slug');
 
 const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.aiff', '.alac']);
 
@@ -262,13 +263,25 @@ class Scanner {
     return { started: true, status: this.getStatus() };
   }
 
+  generateUniqueArtistSlug(name, artistId = null) {
+    const base = slugifyArtistName(name);
+    const existing = this.db.prepare('SELECT id FROM artists WHERE slug = ?').all(base);
+    if (existing.length === 0 || existing.some((row) => row.id === artistId)) {
+      return base;
+    }
+    return `${base}-${shortHash(name).slice(0, 6)}`;
+  }
+
   upsertArtist(name, seenAt) {
-    const existing = this.db.prepare('SELECT id FROM artists WHERE name = ?').get(name);
+    const existing = this.db.prepare('SELECT id, slug FROM artists WHERE name = ?').get(name);
     if (existing) {
-      this.db.prepare('UPDATE artists SET lastSeen = ?, deleted = 0 WHERE id = ?').run(seenAt, existing.id);
+      const nextSlug = existing.slug || this.generateUniqueArtistSlug(name, existing.id);
+      this.db.prepare('UPDATE artists SET slug = ?, lastSeen = ?, deleted = 0 WHERE id = ?').run(nextSlug, seenAt, existing.id);
       return existing.id;
     }
-    const res = this.db.prepare('INSERT INTO artists(name, firstSeen, lastSeen, deleted) VALUES (?, ?, ?, 0)').run(name, seenAt, seenAt);
+
+    const slug = this.generateUniqueArtistSlug(name);
+    const res = this.db.prepare('INSERT INTO artists(name, slug, firstSeen, lastSeen, deleted) VALUES (?, ?, ?, ?, 0)').run(name, slug, seenAt, seenAt);
     return res.lastInsertRowid;
   }
 

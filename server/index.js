@@ -117,7 +117,7 @@ function getArtistOverview(artistId) {
 }
 
 function getAllMissing(limit) {
-  const artists = db.prepare('SELECT id, name FROM artists WHERE deleted = 0').all();
+  const artists = db.prepare('SELECT id, name, slug FROM artists WHERE deleted = 0').all();
   const out = [];
   for (const artist of artists) {
     const overview = getArtistOverview(artist.id);
@@ -125,6 +125,7 @@ function getAllMissing(limit) {
       out.push({
         artistId: artist.id,
         artistName: artist.name,
+        artistSlug: artist.slug,
         title: item.title,
         year: item.year
       });
@@ -137,7 +138,7 @@ function getAllMissing(limit) {
 
 function getRecent(limit) {
   return db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName, ar.slug AS artistSlug
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
     WHERE al.deleted = 0
@@ -157,7 +158,7 @@ function clearLibraryState() {
     db.prepare('DELETE FROM albums').run();
     db.prepare('DELETE FROM wanted_albums').run();
     db.prepare('DELETE FROM album_aliases').run();
-    db.prepare('DELETE FROM artists').run();
+    db.prepare('UPDATE artists SET deleted = 1').run();
     db.prepare(`
       UPDATE scan_state
       SET status = 'idle', startedAt = NULL, finishedAt = NULL, currentPath = NULL,
@@ -257,7 +258,7 @@ app.get('/api/library/albums', async (req, reply) => {
   const params = search ? { q: `%${search}%`, limit: pageSize, offset } : { limit: pageSize, offset };
 
   const items = db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
     WHERE al.deleted = 0 ${where}
@@ -292,7 +293,7 @@ app.put('/api/library/albums/:id/owned', async (req, reply) => {
   }
 
   const row = db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
     WHERE al.id = ?
@@ -301,11 +302,17 @@ app.put('/api/library/albums/:id/owned', async (req, reply) => {
 });
 
 app.get('/api/library/artists', async () => {
-  return db.prepare('SELECT id, name FROM artists WHERE deleted = 0 ORDER BY name').all();
+  return db.prepare('SELECT id, name, slug FROM artists WHERE deleted = 0 ORDER BY name').all();
+});
+
+app.get('/api/artist/by-slug/:slug', async (req, reply) => {
+  const artist = db.prepare('SELECT id, name, slug FROM artists WHERE slug = ? AND deleted = 0').get(req.params.slug);
+  if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+  return artist;
 });
 
 app.get('/api/library/artists/:id', async (req, reply) => {
-  const artist = db.prepare('SELECT id, name FROM artists WHERE id = ? AND deleted = 0').get(req.params.id);
+  const artist = db.prepare('SELECT id, name, slug FROM artists WHERE id = ? AND deleted = 0').get(req.params.id);
   if (!artist) return reply.code(404).send({ error: 'Artist not found' });
   const albums = db.prepare(`
     SELECT id, title, path, lastFileMtime, formatsJson, trackCount
@@ -321,7 +328,7 @@ app.get('/api/library/recent', async (req) => {
 
 app.get('/api/artist/:id/overview', async (req, reply) => {
   const artistId = Number(req.params.id);
-  const artist = db.prepare('SELECT id, name FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  const artist = db.prepare('SELECT id, name, slug FROM artists WHERE id = ? AND deleted = 0').get(artistId);
   if (!artist) return reply.code(404).send({ error: 'Artist not found' });
   return { artist, ...getArtistOverview(artistId) };
 });
@@ -564,7 +571,7 @@ app.post('/api/wishlist', async (req, reply) => {
 
 app.get('/api/wishlist', async () => {
   return db.prepare(`
-    SELECT w.id, w.status, w.createdAt, ea.id AS expectedAlbumId, ea.title, ea.year, ar.id AS artistId, ar.name AS artistName
+    SELECT w.id, w.status, w.createdAt, ea.id AS expectedAlbumId, ea.title, ea.year, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug
     FROM wishlist_albums w
     JOIN expected_albums ea ON ea.id = w.expectedAlbumId
     JOIN expected_artists er ON er.id = ea.expectedArtistId
