@@ -102,11 +102,11 @@ function initDb() {
       FOREIGN KEY(expectedArtistId) REFERENCES expected_artists(id)
     );
 
-    CREATE TABLE IF NOT EXISTS expected_ignored (
+    CREATE TABLE IF NOT EXISTS expected_ignored_albums (
       artistId INTEGER NOT NULL,
       expectedAlbumId INTEGER NOT NULL,
       createdAt TEXT NOT NULL,
-      UNIQUE(artistId, expectedAlbumId),
+      PRIMARY KEY (artistId, expectedAlbumId),
       FOREIGN KEY(artistId) REFERENCES artists(id)
     );
 
@@ -168,6 +168,17 @@ function initDb() {
   }
   if (!expectedAlbumColumns.some((column) => column.name === 'secondaryTypesJson')) {
     db.exec("ALTER TABLE expected_albums ADD COLUMN secondaryTypesJson TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?");
+  const hasExpectedIgnoredLegacy = tableExists.get('expected_ignored');
+  if (hasExpectedIgnoredLegacy) {
+    db.exec(`
+      INSERT OR IGNORE INTO expected_ignored_albums (artistId, expectedAlbumId, createdAt)
+      SELECT artistId, expectedAlbumId, createdAt
+      FROM expected_ignored
+    `);
+    db.exec('DROP TABLE expected_ignored');
   }
 
   db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();

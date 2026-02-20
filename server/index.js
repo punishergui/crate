@@ -391,8 +391,8 @@ app.get('/api/missing/top', async (req, reply) => {
   return getAllMissing(limit);
 });
 
-app.post('/api/expected/artist/:id/sync', async (req, reply) => {
-  const artistId = Number(req.params.id);
+app.post('/api/expected/artist/:artistId/sync', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
   if (!Number.isInteger(artistId) || artistId < 1) {
     return reply.code(400).send({ error: 'invalid artist id' });
   }
@@ -413,8 +413,8 @@ app.post('/api/expected/artist/:id/sync', async (req, reply) => {
   }
 });
 
-app.get('/api/expected/artist/:id/settings', async (req, reply) => {
-  const artistId = Number(req.params.id);
+app.get('/api/expected/artist/:artistId/settings', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
   if (!Number.isInteger(artistId) || artistId < 1) {
     return reply.code(400).send({ error: 'invalid artist id' });
   }
@@ -426,8 +426,8 @@ app.get('/api/expected/artist/:id/settings', async (req, reply) => {
   }
 });
 
-app.put('/api/expected/artist/:id/settings', async (req, reply) => {
-  const artistId = Number(req.params.id);
+app.post('/api/expected/artist/:artistId/settings', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
   if (!Number.isInteger(artistId) || artistId < 1) {
     return reply.code(400).send({ error: 'invalid artist id' });
   }
@@ -439,8 +439,21 @@ app.put('/api/expected/artist/:id/settings', async (req, reply) => {
   }
 });
 
-app.post('/api/expected/artist/:id/ignore', async (req, reply) => {
-  const artistId = Number(req.params.id);
+app.put('/api/expected/artist/:artistId/settings', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  try {
+    return discography.updateArtistSettings(artistId, req.body || {});
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to save expected settings' });
+  }
+});
+
+app.post('/api/expected/artist/:artistId/ignore', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
   const expectedAlbumId = Number(req.body?.expectedAlbumId);
   if (!Number.isInteger(artistId) || artistId < 1) {
     return reply.code(400).send({ error: 'invalid artist id' });
@@ -456,8 +469,25 @@ app.post('/api/expected/artist/:id/ignore', async (req, reply) => {
   }
 });
 
-app.get('/api/expected/artist/:id/summary', async (req, reply) => {
-  const artistId = Number(req.params.id);
+app.post('/api/expected/artist/:artistId/unignore', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
+  const expectedAlbumId = Number(req.body?.expectedAlbumId);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  if (!Number.isInteger(expectedAlbumId) || expectedAlbumId < 1) {
+    return reply.code(400).send({ error: 'expectedAlbumId must be a positive integer' });
+  }
+  try {
+    return discography.unignoreExpectedAlbum(artistId, expectedAlbumId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to unignore expected album' });
+  }
+});
+
+app.get('/api/expected/artist/:artistId/summary', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
   if (!Number.isInteger(artistId) || artistId < 1) {
     return reply.code(400).send({ error: 'invalid artist id' });
   }
@@ -469,8 +499,8 @@ app.get('/api/expected/artist/:id/summary', async (req, reply) => {
   }
 });
 
-app.get('/api/expected/artist/:id/missing', async (req, reply) => {
-  const artistId = Number(req.params.id);
+app.get('/api/expected/artist/:artistId/missing', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
   if (!Number.isInteger(artistId) || artistId < 1) {
     return reply.code(400).send({ error: 'invalid artist id' });
   }

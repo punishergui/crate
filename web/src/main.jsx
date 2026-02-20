@@ -151,7 +151,14 @@ function ArtistPage() {
 
   const addToWishlist = async (album) => {
     try {
-      await api.post('/api/wishlist', { artistId: Number(id), title: album.title, year: album.year, source: 'musicbrainz' });
+      await api.post('/api/wishlist', {
+        artistId: Number(id),
+        artistName: data.artist.name,
+        title: album.title,
+        year: album.year,
+        source: 'musicbrainz',
+        expectedAlbumId: album.id
+      });
       setStatus('Added to wishlist');
     } catch (error) {
       setStatus(error.message);
@@ -169,11 +176,22 @@ function ArtistPage() {
     }
   };
 
+  const unignoreExpected = async (expectedAlbumId) => {
+    try {
+      await api.post(`/api/expected/artist/${id}/unignore`, { expectedAlbumId });
+      const nextSummary = await api.get(`/api/expected/artist/${id}/summary`);
+      setSummary(nextSummary);
+      setStatus('Album unignored');
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
   const updateExpectedFilter = async (key, value) => {
     const next = { ...expectedSettings, [key]: value };
     setExpectedSettings(next);
     try {
-      await api.put(`/api/expected/artist/${id}/settings`, next);
+      await api.post(`/api/expected/artist/${id}/settings`, next);
       const nextSummary = await api.get(`/api/expected/artist/${id}/summary`);
       setSummary(nextSummary);
     } catch (error) {
@@ -188,7 +206,7 @@ function ArtistPage() {
 
     <div className="stats-row">
       <span>Owned {summary?.ownedCount ?? data.owned.length}</span>
-      <span>Expected {summary?.expectedCount ?? 0}</span>
+      <span>Expected {summary?.expectedCountFiltered ?? summary?.expectedCount ?? 0}</span>
       <span>Missing {summary?.missingCount ?? 0}</span>
       <span>Ignored {summary?.ignoredCount ?? 0}</span>
       <span>Completion {summary?.completionPct === null || summary?.completionPct === undefined ? 'n/a' : `${summary.completionPct}%`}</span>
@@ -208,6 +226,13 @@ function ArtistPage() {
           <button onClick={() => addToWishlist(album)}>Add to Wishlist</button>
           <button onClick={() => ignoreExpected(album.id)}>Ignore</button>
         </li>)}</ul>
+        {(summary?.ignoredAlbums || []).length ? <details>
+          <summary>Ignored ({summary?.ignoredCount || 0})</summary>
+          <ul>{(summary?.ignoredAlbums || []).map((album) => <li key={album.id}>
+            {album.title}{album.year ? ` (${album.year})` : ''}
+            <button onClick={() => unignoreExpected(album.id)}>Unignore</button>
+          </li>)}</ul>
+        </details> : null}
       </div>
       <div>
         <h2>Manual Wanted</h2>
