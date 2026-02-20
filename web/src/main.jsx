@@ -118,6 +118,8 @@ function ArtistPage() {
   const [data, setData] = React.useState();
   const [summary, setSummary] = React.useState();
   const [expectedSettings, setExpectedSettings] = React.useState({ includeLive: false, includeCompilations: false });
+  const [lidarrEnabled, setLidarrEnabled] = React.useState(false);
+  const [lidarrResults, setLidarrResults] = React.useState({});
   const [status, setStatus] = React.useState('');
 
   const artistId = data?.artist?.id;
@@ -135,12 +137,14 @@ function ArtistPage() {
     const overview = await api.get(`/api/artist/${artist.id}/overview`);
     setData(overview);
     try {
-      const [nextSummary, nextSettings] = await Promise.all([
+      const [nextSummary, nextSettings, appSettings] = await Promise.all([
         api.get(`/api/expected/artist/${artist.id}/summary`),
-        api.get(`/api/expected/artist/${artist.id}/settings`)
+        api.get(`/api/expected/artist/${artist.id}/settings`),
+        api.get('/api/settings')
       ]);
       setSummary(nextSummary);
       setExpectedSettings(nextSettings);
+      setLidarrEnabled(Boolean(appSettings.lidarrEnabled));
     } catch {
       setSummary(null);
     }
@@ -203,6 +207,24 @@ function ArtistPage() {
     }
   };
 
+
+  const searchInLidarr = async (album) => {
+    if (!artistId) return;
+    setStatus(`Searching Lidarr for ${album.title}...`);
+    try {
+      const response = await api.post('/api/integrations/lidarr/search', {
+        artistName: data.artist.name,
+        albumTitle: album.title,
+        year: album.year || null,
+        expectedAlbumId: album.id
+      });
+      setLidarrResults((prev) => ({ ...prev, [album.id]: response.lidarr }));
+      setStatus(`Lidarr search triggered for ${album.title}`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
   const updateExpectedFilter = async (key, value) => {
     if (!artistId) return;
     const next = { ...expectedSettings, [key]: value };
@@ -241,6 +263,8 @@ function ArtistPage() {
         <ul>{(summary?.missingAlbums || []).map((album) => <li key={album.id}>
           {album.title}{album.year ? ` (${album.year})` : ''}
           <button onClick={() => addToWishlist(album)}>Add to Wishlist</button>
+          {lidarrEnabled ? <button onClick={() => searchInLidarr(album)}>Search in Lidarr</button> : null}
+          {lidarrResults[album.id]?.albumUrl ? <a href={lidarrResults[album.id].albumUrl} target="_blank" rel="noreferrer">Open Lidarr</a> : null}
           <button onClick={() => ignoreExpected(album.id)}>Ignore</button>
         </li>)}</ul>
         {(summary?.ignoredAlbums || []).length ? <details>
@@ -279,6 +303,11 @@ function Settings({ settings, setSettings }) {
   return <section><h1>Settings</h1>
     <label>Accent <input value={form.accentColor || ''} onChange={(e) => setForm({ ...form, accentColor: e.target.value })} /></label>
     <label>Noise <input type="checkbox" checked={Boolean(form.noiseOverlay)} onChange={(e) => setForm({ ...form, noiseOverlay: e.target.checked })} /></label>
+    <label>Lidarr Enabled <input type="checkbox" checked={Boolean(form.lidarrEnabled)} onChange={(e) => setForm({ ...form, lidarrEnabled: e.target.checked })} /></label>
+    <label>Lidarr Base URL <input value={form.lidarrBaseUrl || ''} onChange={(e) => setForm({ ...form, lidarrBaseUrl: e.target.value })} placeholder="http://lidarr:8686" /></label>
+    <label>Lidarr API Key <input value={form.lidarrApiKey || ''} onChange={(e) => setForm({ ...form, lidarrApiKey: e.target.value })} /></label>
+    <label>Lidarr Quality Profile ID (optional) <input value={form.lidarrQualityProfileId || ''} onChange={(e) => setForm({ ...form, lidarrQualityProfileId: e.target.value ? Number(e.target.value) : null })} /></label>
+    <label>Lidarr Root Folder Path (optional) <input value={form.lidarrRootFolderPath || ''} onChange={(e) => setForm({ ...form, lidarrRootFolderPath: e.target.value })} placeholder="/music" /></label>
     <button onClick={save}>Save</button>
     <button onClick={() => api.post('/api/scan/start').then((v) => setScan(v.status))}>Scan Now</button>
     <button onClick={() => api.post('/api/scan/cancel').then((v) => setScan(v.status))}>Cancel Scan</button>

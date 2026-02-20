@@ -6,6 +6,7 @@ const { initDb } = require('./db');
 const { Scanner } = require('./scanner');
 const { normalizeTitle } = require('./normalize');
 const { createDiscographyService } = require('./discography');
+const { createLidarrClient } = require('./lidarr');
 
 const APP_NAME = 'crate';
 const PORT = Number(process.env.PORT || 4000);
@@ -24,12 +25,17 @@ function normalizeSettings(row) {
     accentColor: row.accentColor,
     noiseOverlay: Boolean(row.noiseOverlay),
     libraryPath: row.libraryPath,
-    lastScanAt: row.lastScanAt || null
+    lastScanAt: row.lastScanAt || null,
+    lidarrEnabled: Boolean(row.lidarrEnabled),
+    lidarrBaseUrl: row.lidarrBaseUrl || '',
+    lidarrApiKey: row.lidarrApiKey || '',
+    lidarrQualityProfileId: Number.isInteger(row.lidarrQualityProfileId) ? row.lidarrQualityProfileId : null,
+    lidarrRootFolderPath: row.lidarrRootFolderPath || ''
   };
 }
 
 function getSettings() {
-  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt FROM settings WHERE id = 1').get();
+  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath FROM settings WHERE id = 1').get();
   return normalizeSettings(row);
 }
 
@@ -52,6 +58,42 @@ function validateSettings(payload) {
       throw new Error('libraryPath must be an absolute path');
     }
     out.libraryPath = payload.libraryPath;
+  }
+  if ('lidarrEnabled' in payload) {
+    if (typeof payload.lidarrEnabled !== 'boolean') {
+      throw new Error('lidarrEnabled must be boolean');
+    }
+    out.lidarrEnabled = payload.lidarrEnabled;
+  }
+  if ('lidarrBaseUrl' in payload) {
+    if (typeof payload.lidarrBaseUrl !== 'string') {
+      throw new Error('lidarrBaseUrl must be a string');
+    }
+    out.lidarrBaseUrl = payload.lidarrBaseUrl.trim();
+  }
+  if ('lidarrApiKey' in payload) {
+    if (typeof payload.lidarrApiKey !== 'string') {
+      throw new Error('lidarrApiKey must be a string');
+    }
+    out.lidarrApiKey = payload.lidarrApiKey.trim();
+  }
+  if ('lidarrQualityProfileId' in payload) {
+    if (payload.lidarrQualityProfileId === null || payload.lidarrQualityProfileId === '') {
+      out.lidarrQualityProfileId = null;
+    } else if (!Number.isInteger(payload.lidarrQualityProfileId) || payload.lidarrQualityProfileId < 1) {
+      throw new Error('lidarrQualityProfileId must be a positive integer when provided');
+    } else {
+      out.lidarrQualityProfileId = payload.lidarrQualityProfileId;
+    }
+  }
+  if ('lidarrRootFolderPath' in payload) {
+    if (payload.lidarrRootFolderPath === null) {
+      out.lidarrRootFolderPath = '';
+    } else if (typeof payload.lidarrRootFolderPath !== 'string') {
+      throw new Error('lidarrRootFolderPath must be a string when provided');
+    } else {
+      out.lidarrRootFolderPath = payload.lidarrRootFolderPath.trim();
+    }
   }
   return out;
 }
@@ -199,10 +241,26 @@ app.get('/api/settings', async () => getSettings());
 app.put('/api/settings', async (req, reply) => {
   try {
     const next = validateSettings(req.body || {});
-    db.prepare('UPDATE settings SET accentColor = ?, noiseOverlay = ?, libraryPath = ? WHERE id = 1').run(
+    db.prepare(`
+      UPDATE settings
+      SET accentColor = ?,
+          noiseOverlay = ?,
+          libraryPath = ?,
+          lidarrEnabled = ?,
+          lidarrBaseUrl = ?,
+          lidarrApiKey = ?,
+          lidarrQualityProfileId = ?,
+          lidarrRootFolderPath = ?
+      WHERE id = 1
+    `).run(
       next.accentColor,
       next.noiseOverlay ? 1 : 0,
-      next.libraryPath
+      next.libraryPath,
+      next.lidarrEnabled ? 1 : 0,
+      next.lidarrBaseUrl,
+      next.lidarrApiKey,
+      next.lidarrQualityProfileId,
+      next.lidarrRootFolderPath || null
     );
     return getSettings();
   } catch (error) {
@@ -578,6 +636,63 @@ app.get('/api/wishlist', async () => {
     JOIN artists ar ON ar.id = er.artistId
     ORDER BY w.createdAt DESC, w.id DESC
   `).all();
+});
+
+
+app.post('/api/integrations/lidarr/search', async (req, reply) => {
+  const artistName = typeof req.body?.artistName === 'string' ? req.body.artistName.trim() : '';
+  const albumTitle = typeof req.body?.albumTitle === 'string' ? req.body.albumTitle.trim() : '';
+  const year = Number.isInteger(req.body?.year) ? req.body.year : null;
+  const expectedAlbumId = Number(req.body?.expectedAlbumId);
+
+  if (!artistName || !albumTitle) {
+    return reply.code(400).send({ error: 'artistName and albumTitle are required' });
+  }
+  if (!Number.isInteger(expectedAlbumId) || expectedAlbumId < 1) {
+    return reply.code(400).send({ error: 'expectedAlbumId must be a positive integer' });
+  }
+
+  const expected = db.prepare(`
+    SELECT ea.id, ea.title, ea.year, er.artistId, ar.name AS artistName
+    FROM expected_albums ea
+    JOIN expected_artists er ON er.id = ea.expectedArtistId
+    JOIN artists ar ON ar.id = er.artistId
+    WHERE ea.id = ?
+  `).get(expectedAlbumId);
+
+  if (!expected) {
+    return reply.code(404).send({ error: 'Expected album not found' });
+  }
+
+  const titleMatches = expected.title.toLowerCase() === albumTitle.toLowerCase();
+  const artistMatches = expected.artistName.toLowerCase() === artistName.toLowerCase();
+  if (!titleMatches || !artistMatches) {
+    return reply.code(409).send({ error: 'artistName/albumTitle do not match expectedAlbumId' });
+  }
+
+  let summary;
+  try {
+    summary = discography.computeSummary(expected.artistId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to validate expected album' });
+  }
+
+  const allowed = summary.missingAlbums.some((album) => album.id === expectedAlbumId);
+  if (!allowed) {
+    return reply.code(409).send({ error: 'Album is not currently eligible for search with active include filters' });
+  }
+
+  const settings = getSettings();
+  try {
+    const lidarr = createLidarrClient(settings);
+    const result = await lidarr.searchMissingAlbum({ artistName, albumTitle, year: year || expected.year || null });
+    return { ok: true, lidarr: result };
+  } catch (error) {
+    const status = error.statusCode || 502;
+    req.log.error({ err: error, artistName, albumTitle, expectedAlbumId }, 'lidarr search failed');
+    return reply.code(status).send({ error: error.message || 'Lidarr request failed' });
+  }
 });
 
 app.get('/api/dashboard', async () => {

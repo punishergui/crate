@@ -32,7 +32,7 @@ function ensureArtistSlugs(db) {
 
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_artists_slug_unique ON artists(slug)');
 
-  const withoutSlug = db.prepare('SELECT id, name FROM artists WHERE slug IS NULL OR slug = ""').all();
+  const withoutSlug = db.prepare("SELECT id, name FROM artists WHERE slug IS NULL OR slug = ''").all();
   const updateSlug = db.prepare('UPDATE artists SET slug = ? WHERE id = ?');
   for (const artist of withoutSlug) {
     updateSlug.run(buildArtistSlug(db, artist.name, artist.id), artist.id);
@@ -49,7 +49,12 @@ function initDb() {
       accentColor TEXT NOT NULL DEFAULT '#FF6A00',
       noiseOverlay INTEGER NOT NULL DEFAULT 1,
       libraryPath TEXT NOT NULL DEFAULT '/music',
-      lastScanAt TEXT
+      lastScanAt TEXT,
+      lidarrEnabled INTEGER NOT NULL DEFAULT 0,
+      lidarrBaseUrl TEXT NOT NULL DEFAULT '',
+      lidarrApiKey TEXT NOT NULL DEFAULT '',
+      lidarrQualityProfileId INTEGER,
+      lidarrRootFolderPath TEXT
     );
 
     CREATE TABLE IF NOT EXISTS artists (
@@ -208,6 +213,24 @@ function initDb() {
       FROM expected_ignored
     `);
     db.exec('DROP TABLE expected_ignored');
+  }
+
+
+  const settingsColumns = db.prepare('PRAGMA table_info(settings)').all();
+  if (!settingsColumns.some((column) => column.name === 'lidarrEnabled')) {
+    db.exec('ALTER TABLE settings ADD COLUMN lidarrEnabled INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!settingsColumns.some((column) => column.name === 'lidarrBaseUrl')) {
+    db.exec("ALTER TABLE settings ADD COLUMN lidarrBaseUrl TEXT NOT NULL DEFAULT ''");
+  }
+  if (!settingsColumns.some((column) => column.name === 'lidarrApiKey')) {
+    db.exec("ALTER TABLE settings ADD COLUMN lidarrApiKey TEXT NOT NULL DEFAULT ''");
+  }
+  if (!settingsColumns.some((column) => column.name === 'lidarrQualityProfileId')) {
+    db.exec('ALTER TABLE settings ADD COLUMN lidarrQualityProfileId INTEGER');
+  }
+  if (!settingsColumns.some((column) => column.name === 'lidarrRootFolderPath')) {
+    db.exec('ALTER TABLE settings ADD COLUMN lidarrRootFolderPath TEXT');
   }
 
   db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();
