@@ -95,9 +95,27 @@ function initDb() {
       title TEXT NOT NULL,
       year INTEGER,
       type TEXT,
+      primaryType TEXT,
+      secondaryTypesJson TEXT NOT NULL DEFAULT '[]',
       normalizedTitle TEXT NOT NULL,
       updatedAt INTEGER NOT NULL,
       FOREIGN KEY(expectedArtistId) REFERENCES expected_artists(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS expected_ignored (
+      artistId INTEGER NOT NULL,
+      expectedAlbumId INTEGER NOT NULL,
+      createdAt TEXT NOT NULL,
+      UNIQUE(artistId, expectedAlbumId),
+      FOREIGN KEY(artistId) REFERENCES artists(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS expected_artist_settings (
+      artistId INTEGER PRIMARY KEY,
+      includeLive INTEGER NOT NULL DEFAULT 0,
+      includeCompilations INTEGER NOT NULL DEFAULT 0,
+      updatedAt TEXT NOT NULL,
+      FOREIGN KEY(artistId) REFERENCES artists(id)
     );
 
     CREATE TABLE IF NOT EXISTS wishlist_albums (
@@ -141,6 +159,15 @@ function initDb() {
   const hasOwnedColumn = albumColumns.some((column) => column.name === 'owned');
   if (!hasOwnedColumn) {
     db.exec('ALTER TABLE albums ADD COLUMN owned INTEGER NOT NULL DEFAULT 1');
+  }
+
+
+  const expectedAlbumColumns = db.prepare('PRAGMA table_info(expected_albums)').all();
+  if (!expectedAlbumColumns.some((column) => column.name === 'primaryType')) {
+    db.exec('ALTER TABLE expected_albums ADD COLUMN primaryType TEXT');
+  }
+  if (!expectedAlbumColumns.some((column) => column.name === 'secondaryTypesJson')) {
+    db.exec("ALTER TABLE expected_albums ADD COLUMN secondaryTypesJson TEXT NOT NULL DEFAULT '[]'");
   }
 
   db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();

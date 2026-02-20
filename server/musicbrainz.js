@@ -107,9 +107,9 @@ async function scheduleRequest(url) {
   return queue;
 }
 
-function isAlbumReleaseGroup(releaseGroup) {
+function isTrackedReleaseGroup(releaseGroup) {
   const primaryType = String(releaseGroup['primary-type'] || '').toLowerCase();
-  return primaryType === 'album';
+  return primaryType === 'album' || primaryType === 'compilation';
 }
 
 async function findArtistByName(name) {
@@ -143,14 +143,18 @@ async function fetchArtistAlbums(mbid) {
     const page = Array.isArray(payload['release-groups']) ? payload['release-groups'] : [];
 
     for (const item of page) {
-      if (!isAlbumReleaseGroup(item)) continue;
+      if (!isTrackedReleaseGroup(item)) continue;
       const firstDate = String(item['first-release-date'] || '');
       const year = /^\d{4}/.test(firstDate) ? Number(firstDate.slice(0, 4)) : null;
+      const primaryType = item['primary-type'] || 'Album';
+      const secondaryTypes = Array.isArray(item['secondary-types']) ? item['secondary-types'].filter((value) => typeof value === 'string') : [];
       releaseGroups.push({
         mbReleaseGroupId: item.id,
         title: item.title,
         year,
-        type: item['primary-type'] || 'Album'
+        type: primaryType,
+        primaryType,
+        secondaryTypes
       });
     }
 
