@@ -78,6 +78,28 @@ function normalizeAlbumKey(value) {
     .slice(0, 80);
 }
 
+function deriveAlbumTitleFromFolderName(folderName) {
+  const original = String(folderName || '').trim();
+  if (!original) return original;
+
+  const withoutWrappedYear = original
+    .replace(/\s*\((19\d{2}|20\d{2})\)\s*$/, '')
+    .replace(/\s*\[(19\d{2}|20\d{2})\]\s*$/, '')
+    .replace(/\s+[-–—]\s+(19\d{2}|20\d{2})\s*$/, '')
+    .trim();
+
+  if (withoutWrappedYear !== original) {
+    return withoutWrappedYear;
+  }
+
+  const leadingYearMatch = original.match(/^(19\d{2}|20\d{2})\s+[-–—:]\s+(.+)$/);
+  if (leadingYearMatch?.[2]) {
+    return leadingYearMatch[2].trim();
+  }
+
+  return original;
+}
+
 function createVirtualAlbumPath(artistPath, albumTitle) {
   const slug = normalizeAlbumKey(albumTitle) || 'unknown-album';
   const hash = crypto.createHash('sha1').update(albumTitle).digest('hex').slice(0, 8);
@@ -403,7 +425,7 @@ class Scanner {
           const albumTracks = collectAudioFiles(albumPath, { recursive: true });
           if (albumTracks.length === 0) continue;
           albumCandidates.push({
-            title: albumEntry.name,
+            title: deriveAlbumTitleFromFolderName(albumEntry.name),
             albumPath,
             tracks: albumTracks
           });
@@ -524,4 +546,4 @@ class Scanner {
   }
 }
 
-module.exports = { Scanner };
+module.exports = { Scanner, deriveAlbumTitleFromFolderName };
