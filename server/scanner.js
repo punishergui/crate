@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.aiff', '.alac']);
 
@@ -57,6 +58,175 @@ function collectAudioFiles(startPath, { recursive }) {
   return out;
 }
 
+function normalizeCompareValue(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[’'`]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function normalizeAlbumKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/['’`]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function createVirtualAlbumPath(artistPath, albumTitle) {
+  const slug = normalizeAlbumKey(albumTitle) || 'unknown-album';
+  const hash = crypto.createHash('sha1').update(albumTitle).digest('hex').slice(0, 8);
+  return path.join(artistPath, '.crate', `${slug}-${hash}`);
+}
+
+function parseAlbumFromFilename(filePath, artistName) {
+  const basename = path.basename(filePath, path.extname(filePath));
+  const parts = basename.split(/\s[-–—]\s/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 3) return null;
+
+  const normalizedArtist = normalizeCompareValue(artistName);
+  const maybeArtist = normalizeCompareValue(parts[0]);
+  if (maybeArtist && normalizedArtist && maybeArtist !== normalizedArtist) return null;
+
+  const album = parts[1];
+  return album || null;
+}
+
+function readUInt24BE(buffer, offset) {
+  return (buffer[offset] << 16) | (buffer[offset + 1] << 8) | buffer[offset + 2];
+}
+
+function parseFlacVorbisComments(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const header = Buffer.alloc(4);
+    if (fs.readSync(fd, header, 0, 4, 0) !== 4 || header.toString('ascii') !== 'fLaC') {
+      return null;
+    }
+
+    let position = 4;
+    while (true) {
+      const blockHeader = Buffer.alloc(4);
+      if (fs.readSync(fd, blockHeader, 0, 4, position) !== 4) return null;
+      const isLast = (blockHeader[0] & 0x80) !== 0;
+      const blockType = blockHeader[0] & 0x7f;
+      const blockLength = readUInt24BE(blockHeader, 1);
+      position += 4;
+
+      if (blockType === 4) {
+        const block = Buffer.alloc(blockLength);
+        if (fs.readSync(fd, block, 0, blockLength, position) !== blockLength) return null;
+
+        let cursor = 0;
+        if (cursor + 4 > block.length) return null;
+        const vendorLength = block.readUInt32LE(cursor);
+        cursor += 4 + vendorLength;
+        if (cursor + 4 > block.length) return null;
+
+        const commentCount = block.readUInt32LE(cursor);
+        cursor += 4;
+
+        const comments = new Map();
+        for (let i = 0; i < commentCount; i += 1) {
+          if (cursor + 4 > block.length) break;
+          const commentLength = block.readUInt32LE(cursor);
+          cursor += 4;
+          if (cursor + commentLength > block.length) break;
+
+          const comment = block.toString('utf8', cursor, cursor + commentLength);
+          cursor += commentLength;
+
+          const sep = comment.indexOf('=');
+          if (sep < 1) continue;
+          const key = comment.slice(0, sep).toUpperCase();
+          const value = comment.slice(sep + 1).trim();
+          if (!value) continue;
+          if (!comments.has(key)) comments.set(key, []);
+          comments.get(key).push(value);
+        }
+
+        return comments;
+      }
+
+      position += blockLength;
+      if (isLast) return null;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+async function readAlbumFromTags(track, artistName) {
+  if (track.ext !== 'flac') return null;
+  try {
+    const comments = parseFlacVorbisComments(track.path);
+    if (!comments) return null;
+
+    const album = comments.get('ALBUM')?.[0];
+    if (!album) return null;
+
+    const taggedArtist = comments.get('ALBUMARTIST')?.[0] || comments.get('ARTIST')?.[0];
+    if (taggedArtist) {
+      const normalizedTagged = normalizeCompareValue(taggedArtist);
+      const normalizedArtist = normalizeCompareValue(artistName);
+      if (normalizedArtist && normalizedTagged && normalizedArtist !== normalizedTagged) {
+        return null;
+      }
+    }
+
+    return {
+      album,
+      year: comments.get('DATE')?.[0] || comments.get('YEAR')?.[0] || null
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function groupLooseRootTracks({ artistName, artistPath, looseRootTracks }) {
+  const groups = new Map();
+  const catchAll = [];
+
+  for (const track of looseRootTracks) {
+    const tagInfo = await readAlbumFromTags(track, artistName);
+    const albumTitle = tagInfo?.album || parseAlbumFromFilename(track.path, artistName);
+    if (!albumTitle) {
+      catchAll.push(track);
+      continue;
+    }
+
+    const key = albumTitle;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        title: albumTitle,
+        albumPath: createVirtualAlbumPath(artistPath, albumTitle),
+        tracks: []
+      });
+    }
+    groups.get(key).tracks.push(track);
+  }
+
+  const groupedAlbums = Array.from(groups.values()).sort((a, b) => a.title.localeCompare(b.title));
+  const topNames = groupedAlbums.slice(0, 5).map((group) => group.title).join(', ');
+  console.debug(
+    `[scanner] artist="${artistName}" detectedAlbumGroups=${groupedAlbums.length} topAlbumNames="${topNames || 'none'}"`
+  );
+
+  if (catchAll.length > 0) {
+    groupedAlbums.push({
+      title: 'Loose Tracks',
+      albumPath: createVirtualAlbumPath(artistPath, 'Loose Tracks'),
+      tracks: catchAll
+    });
+  }
+
+  return groupedAlbums;
+}
+
 class Scanner {
   constructor(db) {
     this.db = db;
@@ -80,7 +250,15 @@ class Scanner {
     }
     this.running = true;
     this.cancelRequested = false;
-    setImmediate(() => this.runScan(libraryPath));
+    setImmediate(() => this.runScan(libraryPath).catch((error) => {
+      this.db.prepare(`
+        UPDATE scan_state
+        SET status = 'error', finishedAt = ?, error = ?, currentPath = NULL
+        WHERE id = 1
+      `).run(nowIso(), String(error.message || error));
+      this.running = false;
+      this.cancelRequested = false;
+    }));
     return { started: true, status: this.getStatus() };
   }
 
@@ -152,7 +330,7 @@ class Scanner {
     return tracks.length;
   }
 
-  runScan(libraryPath) {
+  async runScan(libraryPath) {
     const seenAt = nowIso();
     const tx = this.db.transaction(() => {
       this.db.prepare(`
@@ -265,22 +443,26 @@ class Scanner {
 
         if (this.cancelRequested) break;
 
-        if (albumCandidates.length > 0 && looseRootTracks.length > 0) {
+        if (looseRootTracks.length > 0) {
           this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(artistPath);
-          const looseTrackCount = this.syncAlbum({
-            artistId,
-            title: 'Loose Tracks',
-            albumPath: artistPath,
-            seenAt,
-            tracks: looseRootTracks
-          });
-          scannedAlbums += 1;
-          scannedFiles += looseTrackCount;
-          this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
-            scannedFiles,
-            scannedAlbums,
-            artistsSeen.size
-          );
+          const groupedLooseAlbums = await groupLooseRootTracks({ artistName, artistPath, looseRootTracks });
+          for (const looseAlbum of groupedLooseAlbums) {
+            const trackCount = this.syncAlbum({
+              artistId,
+              title: looseAlbum.title,
+              albumPath: looseAlbum.albumPath,
+              seenAt,
+              tracks: looseAlbum.tracks
+            });
+            if (!trackCount) continue;
+            scannedAlbums += 1;
+            scannedFiles += trackCount;
+            this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
+              scannedFiles,
+              scannedAlbums,
+              artistsSeen.size
+            );
+          }
         } else if (albumCandidates.length === 0) {
           const rootTracks = collectAudioFiles(artistPath, { recursive: true });
           if (rootTracks.length > 0) {
@@ -288,7 +470,7 @@ class Scanner {
             const rootTrackCount = this.syncAlbum({
               artistId,
               title: 'Loose Tracks',
-              albumPath: artistPath,
+              albumPath: createVirtualAlbumPath(artistPath, 'Loose Tracks'),
               seenAt,
               tracks: rootTracks
             });
