@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
+const { slugifyArtistName, shortHash } = require('./slug');
 
 const DATA_DIR = '/data';
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
@@ -11,6 +12,31 @@ function ensureDataDirs() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+
+
+function buildArtistSlug(db, name, rowId = null) {
+  const base = slugifyArtistName(name);
+  const rows = db.prepare('SELECT id, name, slug FROM artists WHERE slug = ?').all(base);
+  if (rows.length === 0) return base;
+  if (rows.some((row) => row.id === rowId)) return base;
+  return `${base}-${shortHash(name).slice(0, 6)}`;
+}
+
+function ensureArtistSlugs(db) {
+  const artistColumns = db.prepare('PRAGMA table_info(artists)').all();
+  const hasSlugColumn = artistColumns.some((column) => column.name === 'slug');
+  if (!hasSlugColumn) {
+    db.exec('ALTER TABLE artists ADD COLUMN slug TEXT');
+  }
+
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_artists_slug_unique ON artists(slug)');
+
+  const withoutSlug = db.prepare('SELECT id, name FROM artists WHERE slug IS NULL OR slug = ""').all();
+  const updateSlug = db.prepare('UPDATE artists SET slug = ? WHERE id = ?');
+  for (const artist of withoutSlug) {
+    updateSlug.run(buildArtistSlug(db, artist.name, artist.id), artist.id);
+  }
 }
 
 function initDb() {
@@ -29,6 +55,7 @@ function initDb() {
     CREATE TABLE IF NOT EXISTS artists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
+      slug TEXT UNIQUE,
       deleted INTEGER NOT NULL DEFAULT 0,
       firstSeen TEXT NOT NULL,
       lastSeen TEXT NOT NULL
@@ -154,6 +181,8 @@ function initDb() {
     CREATE INDEX IF NOT EXISTS idx_expected_albums_normalized_title ON expected_albums(expectedArtistId, normalizedTitle);
     CREATE INDEX IF NOT EXISTS idx_wishlist_status ON wishlist_albums(status);
   `);
+
+  ensureArtistSlugs(db);
 
   const albumColumns = db.prepare('PRAGMA table_info(albums)').all();
   const hasOwnedColumn = albumColumns.some((column) => column.name === 'owned');
