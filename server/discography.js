@@ -19,7 +19,17 @@ function createDiscographyService(db) {
     return db.prepare('SELECT id, artistId, mbid, name, updatedAt FROM expected_artists WHERE artistId = ?').get(artistId);
   }
 
+  function ensureArtistExists(artistId) {
+    const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+    if (!artist) {
+      const error = new Error('Artist not found');
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
   function getArtistSettings(artistId) {
+    ensureArtistExists(artistId);
     const row = db.prepare(`
       SELECT includeLive, includeCompilations
       FROM expected_artist_settings
@@ -38,7 +48,8 @@ function createDiscographyService(db) {
       ? expectedAlbum.secondaryTypes.map((entry) => String(entry || '').toLowerCase())
       : [];
 
-    if (!settings.includeCompilations && primaryType === 'compilation') {
+    const isCompilation = primaryType === 'compilation' || secondaryTypes.includes('compilation');
+    if (!settings.includeCompilations && isCompilation) {
       return false;
     }
     if (!settings.includeLive && secondaryTypes.includes('live')) {
@@ -143,9 +154,8 @@ function createDiscographyService(db) {
     }
 
     const settings = getArtistSettings(artistId);
-    const ignoredIds = new Set(
-      db.prepare('SELECT expectedAlbumId FROM expected_ignored WHERE artistId = ?').all(artistId).map((row) => row.expectedAlbumId)
-    );
+    const ignoredRows = db.prepare('SELECT expectedAlbumId FROM expected_ignored_albums WHERE artistId = ?').all(artistId);
+    const ignoredIds = new Set(ignoredRows.map((row) => row.expectedAlbumId));
 
     const expectedAlbumsRaw = db.prepare(`
       SELECT ea.id, ea.title, ea.year, ea.type, ea.primaryType, ea.secondaryTypesJson, ea.normalizedTitle
@@ -159,6 +169,8 @@ function createDiscographyService(db) {
       ...album,
       secondaryTypes: JSON.parse(album.secondaryTypesJson || '[]')
     }));
+
+    const expectedAlbumsFiltered = expectedAlbums.filter((album) => shouldIncludeAlbum(album, settings));
 
     const ownedAlbums = db.prepare(`
       SELECT id, title
@@ -201,7 +213,8 @@ function createDiscographyService(db) {
 
     let matchedCount = 0;
     const missingAlbums = [];
-    for (const expected of expectedAlbums) {
+    const ignoredAlbums = [];
+    for (const expected of expectedAlbumsFiltered) {
       const overrideOwnedId = overrideMap.get(expected.id);
       const normalizedMatches = ownedByNormalized.get(expected.normalizedTitle) || [];
       const hasStrongAliasMatch = ownedAlbumsWithNormalized.some((ownedAlbum) => {
@@ -210,7 +223,17 @@ function createDiscographyService(db) {
       const hasMatch = Boolean(overrideOwnedId) || normalizedMatches.length > 0 || hasStrongAliasMatch;
       if (hasMatch) {
         matchedCount += 1;
-      } else if (!ignoredIds.has(expected.id) && shouldIncludeAlbum(expected, settings)) {
+      } else if (ignoredIds.has(expected.id)) {
+        ignoredAlbums.push({
+          id: expected.id,
+          title: expected.title,
+          year: expected.year,
+          type: expected.type,
+          primaryType: expected.primaryType,
+          secondaryTypes: expected.secondaryTypes,
+          normalizedTitle: expected.normalizedTitle
+        });
+      } else {
         missingAlbums.push({
           id: expected.id,
           title: expected.title,
@@ -224,9 +247,10 @@ function createDiscographyService(db) {
     }
 
     const expectedCount = expectedAlbums.length;
+    const expectedCountFiltered = expectedAlbumsFiltered.length;
     const missingCount = missingAlbums.length;
-    const ignoredCount = ignoredIds.size;
-    const completionPct = expectedCount === 0 ? null : Math.round((matchedCount / expectedCount) * 100);
+    const ignoredCount = ignoredAlbums.length;
+    const completionPct = expectedCountFiltered === 0 ? null : Math.round((matchedCount / expectedCountFiltered) * 100);
 
     const matchedOwnedAlbums = ownedAlbumsWithNormalized.filter((ownedAlbum) => {
       const normalizedOwnedTitle = ownedAlbum.normalizedTitle;
@@ -250,10 +274,12 @@ function createDiscographyService(db) {
       settings,
       ownedCount: ownedAlbums.length,
       expectedCount,
+      expectedCountFiltered,
       missingCount,
       ignoredCount,
       completionPct,
       missingAlbums,
+      ignoredAlbums,
       matchedOwnedCount: matchedOwnedAlbums.length,
       matchedOwnedAlbums,
       unmatchedOwnedAlbums
@@ -265,12 +291,7 @@ function createDiscographyService(db) {
   }
 
   function ignoreExpectedAlbum(artistId, expectedAlbumId) {
-    const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
-    if (!artist) {
-      const error = new Error('Artist not found');
-      error.statusCode = 404;
-      throw error;
-    }
+    ensureArtistExists(artistId);
 
     const album = db.prepare(`
       SELECT ea.id
@@ -286,7 +307,7 @@ function createDiscographyService(db) {
     }
 
     db.prepare(`
-      INSERT INTO expected_ignored (artistId, expectedAlbumId, createdAt)
+      INSERT INTO expected_ignored_albums (artistId, expectedAlbumId, createdAt)
       VALUES (?, ?, ?)
       ON CONFLICT(artistId, expectedAlbumId) DO NOTHING
     `).run(artistId, expectedAlbumId, new Date().toISOString());
@@ -294,13 +315,14 @@ function createDiscographyService(db) {
     return { ok: true };
   }
 
+  function unignoreExpectedAlbum(artistId, expectedAlbumId) {
+    ensureArtistExists(artistId);
+    db.prepare('DELETE FROM expected_ignored_albums WHERE artistId = ? AND expectedAlbumId = ?').run(artistId, expectedAlbumId);
+    return { ok: true };
+  }
+
   function updateArtistSettings(artistId, payload) {
-    const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
-    if (!artist) {
-      const error = new Error('Artist not found');
-      error.statusCode = 404;
-      throw error;
-    }
+    ensureArtistExists(artistId);
 
     const includeLive = typeof payload?.includeLive === 'boolean' ? payload.includeLive : false;
     const includeCompilations = typeof payload?.includeCompilations === 'boolean' ? payload.includeCompilations : false;
@@ -317,7 +339,15 @@ function createDiscographyService(db) {
     return getArtistSettings(artistId);
   }
 
-  return { syncExpectedForArtist, computeSummary, getMissingAlbums, ignoreExpectedAlbum, getArtistSettings, updateArtistSettings };
+  return {
+    syncExpectedForArtist,
+    computeSummary,
+    getMissingAlbums,
+    ignoreExpectedAlbum,
+    unignoreExpectedAlbum,
+    getArtistSettings,
+    updateArtistSettings
+  };
 }
 
 module.exports = { createDiscographyService };
