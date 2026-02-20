@@ -129,8 +129,7 @@ class Scanner {
     this.db.prepare('UPDATE tracks SET deleted = 1 WHERE albumId = ? AND lastSeen < ?').run(albumId, seenAt);
   }
 
-  scanAlbum({ artistId, title, albumPath, seenAt }) {
-    const tracks = collectAudioFiles(albumPath, { recursive: true });
+  syncAlbum({ artistId, title, albumPath, tracks, seenAt }) {
     if (tracks.length === 0) return null;
 
     const formats = new Set();
@@ -206,25 +205,22 @@ class Scanner {
           .filter((entry) => entry.isDirectory() && !isHiddenName(entry.name))
           .sort((a, b) => a.name.localeCompare(b.name));
 
+        const albumCandidates = [];
         for (const albumEntry of albumFolders) {
           if (this.cancelRequested) break;
           const albumPath = path.join(artistPath, albumEntry.name);
-          this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(albumPath);
-          const trackCount = this.scanAlbum({ artistId, title: albumEntry.name, albumPath, seenAt });
-          if (!trackCount) continue;
-
-          scannedAlbums += 1;
-          scannedFiles += trackCount;
-          this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
-            scannedFiles,
-            scannedAlbums,
-            artistsSeen.size
-          );
+          const albumTracks = collectAudioFiles(albumPath, { recursive: true });
+          if (albumTracks.length === 0) continue;
+          albumCandidates.push({
+            title: albumEntry.name,
+            albumPath,
+            tracks: albumTracks
+          });
         }
 
         if (this.cancelRequested) break;
 
-        const looseTracks = artistEntries
+        const looseRootTracks = artistEntries
           .filter((entry) => entry.isFile() && !isHiddenName(entry.name) && isAudioFileName(entry.name))
           .map((entry) => {
             const fullPath = path.join(artistPath, entry.name);
@@ -242,31 +238,68 @@ class Scanner {
           })
           .filter(Boolean);
 
-        if (looseTracks.length > 0) {
-          const formats = new Set();
-          let latestMtime = 0;
-          for (const track of looseTracks) {
-            formats.add(track.ext);
-            latestMtime = Math.max(latestMtime, track.mtime || 0);
-          }
-          const singlesAlbumId = this.upsertAlbum({
+        console.debug(
+          `[scanner] artist="${artistName}" subfolderAlbumCount=${albumCandidates.length} looseRootTrackCount=${looseRootTracks.length}`
+        );
+
+        for (const albumCandidate of albumCandidates) {
+          if (this.cancelRequested) break;
+          this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(albumCandidate.albumPath);
+          const trackCount = this.syncAlbum({
             artistId,
-            title: 'Singles',
-            albumPath: artistPath,
-            seenAt,
-            formats,
-            trackCount: looseTracks.length,
-            lastFileMtime: latestMtime || null
+            title: albumCandidate.title,
+            albumPath: albumCandidate.albumPath,
+            tracks: albumCandidate.tracks,
+            seenAt
           });
-          this.syncTracks(singlesAlbumId, looseTracks, seenAt);
+          if (!trackCount) continue;
 
           scannedAlbums += 1;
-          scannedFiles += looseTracks.length;
+          scannedFiles += trackCount;
           this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
             scannedFiles,
             scannedAlbums,
             artistsSeen.size
           );
+        }
+
+        if (this.cancelRequested) break;
+
+        if (albumCandidates.length > 0 && looseRootTracks.length > 0) {
+          this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(artistPath);
+          const looseTrackCount = this.syncAlbum({
+            artistId,
+            title: 'Loose Tracks',
+            albumPath: artistPath,
+            seenAt,
+            tracks: looseRootTracks
+          });
+          scannedAlbums += 1;
+          scannedFiles += looseTrackCount;
+          this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
+            scannedFiles,
+            scannedAlbums,
+            artistsSeen.size
+          );
+        } else if (albumCandidates.length === 0) {
+          const rootTracks = collectAudioFiles(artistPath, { recursive: true });
+          if (rootTracks.length > 0) {
+            this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(artistPath);
+            const rootTrackCount = this.syncAlbum({
+              artistId,
+              title: 'Loose Tracks',
+              albumPath: artistPath,
+              seenAt,
+              tracks: rootTracks
+            });
+            scannedAlbums += 1;
+            scannedFiles += rootTrackCount;
+            this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
+              scannedFiles,
+              scannedAlbums,
+              artistsSeen.size
+            );
+          }
         }
       }
 
