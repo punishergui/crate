@@ -1,5 +1,5 @@
 const { findArtistByName, fetchArtistAlbums } = require('./musicbrainz');
-const { normalizeTitle } = require('./normalize');
+const { normalizeTitle, isStrongTitleAliasMatch } = require('./normalize');
 
 const MUSICBRAINZ_SYNC_TIMEOUT_MS = 15000;
 
@@ -135,9 +135,14 @@ function createDiscographyService(db) {
       )
     `).all(artistId);
 
+    const ownedAlbumsWithNormalized = ownedAlbums.map((album) => ({
+      ...album,
+      normalizedTitle: normalizeTitle(album.title)
+    }));
+
     const ownedByNormalized = new Map();
-    for (const album of ownedAlbums) {
-      const normalized = normalizeTitle(album.title);
+    for (const album of ownedAlbumsWithNormalized) {
+      const normalized = album.normalizedTitle;
       if (!ownedByNormalized.has(normalized)) {
         ownedByNormalized.set(normalized, []);
       }
@@ -157,11 +162,17 @@ function createDiscographyService(db) {
     for (const expected of expectedAlbums) {
       const overrideOwnedId = overrideMap.get(expected.id);
       const normalizedMatches = ownedByNormalized.get(expected.normalizedTitle) || [];
-      const hasMatch = Boolean(overrideOwnedId) || normalizedMatches.length > 0;
+      const hasStrongAliasMatch = ownedAlbumsWithNormalized.some((ownedAlbum) => {
+        return isStrongTitleAliasMatch(ownedAlbum.normalizedTitle, expected.normalizedTitle);
+      });
+      const hasMatch = Boolean(overrideOwnedId) || normalizedMatches.length > 0 || hasStrongAliasMatch;
       if (hasMatch) {
         matchedCount += 1;
       } else {
-        missingAlbums.push(expected);
+        missingAlbums.push({
+          ...expected,
+          normalizedTitle: expected.normalizedTitle
+        });
       }
     }
 
@@ -169,13 +180,21 @@ function createDiscographyService(db) {
     const missingCount = missingAlbums.length;
     const completionPct = expectedCount === 0 ? null : Math.round((matchedCount / expectedCount) * 100);
 
-    const matchedOwnedAlbums = ownedAlbums.filter((ownedAlbum) => {
-      const normalizedOwnedTitle = normalizeTitle(ownedAlbum.title);
-      return overrideOwnedIds.has(ownedAlbum.id) || expectedNormalizedTitles.has(normalizedOwnedTitle);
+    const matchedOwnedAlbums = ownedAlbumsWithNormalized.filter((ownedAlbum) => {
+      const normalizedOwnedTitle = ownedAlbum.normalizedTitle;
+      const hasStrongAliasMatch = expectedAlbums.some((expectedAlbum) => {
+        return isStrongTitleAliasMatch(normalizedOwnedTitle, expectedAlbum.normalizedTitle);
+      });
+      return overrideOwnedIds.has(ownedAlbum.id) || expectedNormalizedTitles.has(normalizedOwnedTitle) || hasStrongAliasMatch;
     });
-    const unmatchedOwnedAlbums = ownedAlbums.filter((ownedAlbum) => {
-      const normalizedOwnedTitle = normalizeTitle(ownedAlbum.title);
-      return !overrideOwnedIds.has(ownedAlbum.id) && !expectedNormalizedTitles.has(normalizedOwnedTitle);
+    const unmatchedOwnedAlbums = ownedAlbumsWithNormalized.filter((ownedAlbum) => {
+      const normalizedOwnedTitle = ownedAlbum.normalizedTitle;
+      const hasStrongAliasMatch = expectedAlbums.some((expectedAlbum) => {
+        return isStrongTitleAliasMatch(normalizedOwnedTitle, expectedAlbum.normalizedTitle);
+      });
+      return !overrideOwnedIds.has(ownedAlbum.id)
+        && !expectedNormalizedTitles.has(normalizedOwnedTitle)
+        && !hasStrongAliasMatch;
     });
 
     return {
