@@ -413,6 +413,49 @@ app.post('/api/expected/artist/:id/sync', async (req, reply) => {
   }
 });
 
+app.get('/api/expected/artist/:id/settings', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  try {
+    return discography.getArtistSettings(artistId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to fetch expected settings' });
+  }
+});
+
+app.put('/api/expected/artist/:id/settings', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  try {
+    return discography.updateArtistSettings(artistId, req.body || {});
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to save expected settings' });
+  }
+});
+
+app.post('/api/expected/artist/:id/ignore', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  const expectedAlbumId = Number(req.body?.expectedAlbumId);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+  if (!Number.isInteger(expectedAlbumId) || expectedAlbumId < 1) {
+    return reply.code(400).send({ error: 'expectedAlbumId must be a positive integer' });
+  }
+  try {
+    return discography.ignoreExpectedAlbum(artistId, expectedAlbumId);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.code(status).send({ error: error.message || 'Failed to ignore expected album' });
+  }
+});
+
 app.get('/api/expected/artist/:id/summary', async (req, reply) => {
   const artistId = Number(req.params.id);
   if (!Number.isInteger(artistId) || artistId < 1) {
@@ -440,7 +483,36 @@ app.get('/api/expected/artist/:id/missing', async (req, reply) => {
 });
 
 app.post('/api/wishlist', async (req, reply) => {
-  const expectedAlbumId = Number(req.body?.expectedAlbumId);
+  let expectedAlbumId = Number(req.body?.expectedAlbumId);
+
+  if ((!Number.isInteger(expectedAlbumId) || expectedAlbumId < 1) && req.body) {
+    const artistId = Number(req.body.artistId);
+    const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
+    const year = Number.isInteger(req.body.year) ? req.body.year : null;
+    const source = typeof req.body.source === 'string' ? req.body.source.trim().toLowerCase() : '';
+
+    if (!Number.isInteger(artistId) || artistId < 1 || !title || source !== 'musicbrainz') {
+      return reply.code(400).send({ error: 'expectedAlbumId or artistId + title + source="musicbrainz" is required' });
+    }
+
+    const found = db.prepare(`
+      SELECT ea.id
+      FROM expected_albums ea
+      JOIN expected_artists er ON er.id = ea.expectedArtistId
+      WHERE er.artistId = ?
+        AND lower(ea.title) = lower(?)
+        AND (? IS NULL OR ea.year = ?)
+      ORDER BY ea.id DESC
+      LIMIT 1
+    `).get(artistId, title, year, year);
+
+    if (!found) {
+      return reply.code(404).send({ error: 'Expected album not found for provided artist/title/year' });
+    }
+
+    expectedAlbumId = found.id;
+  }
+
   if (!Number.isInteger(expectedAlbumId) || expectedAlbumId < 1) {
     return reply.code(400).send({ error: 'expectedAlbumId must be a positive integer' });
   }

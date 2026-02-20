@@ -116,14 +116,19 @@ function ArtistPage() {
   const { id } = useParams();
   const [data, setData] = React.useState();
   const [summary, setSummary] = React.useState();
+  const [expectedSettings, setExpectedSettings] = React.useState({ includeLive: false, includeCompilations: false });
   const [status, setStatus] = React.useState('');
 
   const load = React.useCallback(async () => {
     const overview = await api.get(`/api/artist/${id}/overview`);
     setData(overview);
     try {
-      const nextSummary = await api.get(`/api/expected/artist/${id}/summary`);
+      const [nextSummary, nextSettings] = await Promise.all([
+        api.get(`/api/expected/artist/${id}/summary`),
+        api.get(`/api/expected/artist/${id}/settings`)
+      ]);
       setSummary(nextSummary);
+      setExpectedSettings(nextSettings);
     } catch {
       setSummary(null);
     }
@@ -144,10 +149,33 @@ function ArtistPage() {
     }
   };
 
-  const addToWishlist = async (expectedAlbumId) => {
+  const addToWishlist = async (album) => {
     try {
-      await api.post('/api/wishlist', { expectedAlbumId });
+      await api.post('/api/wishlist', { artistId: Number(id), title: album.title, year: album.year, source: 'musicbrainz' });
       setStatus('Added to wishlist');
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
+  const ignoreExpected = async (expectedAlbumId) => {
+    try {
+      await api.post(`/api/expected/artist/${id}/ignore`, { expectedAlbumId });
+      const nextSummary = await api.get(`/api/expected/artist/${id}/summary`);
+      setSummary(nextSummary);
+      setStatus('Album ignored');
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
+  const updateExpectedFilter = async (key, value) => {
+    const next = { ...expectedSettings, [key]: value };
+    setExpectedSettings(next);
+    try {
+      await api.put(`/api/expected/artist/${id}/settings`, next);
+      const nextSummary = await api.get(`/api/expected/artist/${id}/summary`);
+      setSummary(nextSummary);
     } catch (error) {
       setStatus(error.message);
     }
@@ -162,6 +190,7 @@ function ArtistPage() {
       <span>Owned {summary?.ownedCount ?? data.owned.length}</span>
       <span>Expected {summary?.expectedCount ?? 0}</span>
       <span>Missing {summary?.missingCount ?? 0}</span>
+      <span>Ignored {summary?.ignoredCount ?? 0}</span>
       <span>Completion {summary?.completionPct === null || summary?.completionPct === undefined ? 'n/a' : `${summary.completionPct}%`}</span>
     </div>
 
@@ -172,8 +201,12 @@ function ArtistPage() {
       </div>
       <div>
         <h2>Expected Missing</h2>
+        <label><input type="checkbox" checked={Boolean(expectedSettings.includeLive)} onChange={(e) => updateExpectedFilter('includeLive', e.target.checked)} /> Include live albums</label>
+        <label><input type="checkbox" checked={Boolean(expectedSettings.includeCompilations)} onChange={(e) => updateExpectedFilter('includeCompilations', e.target.checked)} /> Include compilations</label>
         <ul>{(summary?.missingAlbums || []).map((album) => <li key={album.id}>
-          {album.title}{album.year ? ` (${album.year})` : ''} <button onClick={() => addToWishlist(album.id)}>Add to Wishlist</button>
+          {album.title}{album.year ? ` (${album.year})` : ''}
+          <button onClick={() => addToWishlist(album)}>Add to Wishlist</button>
+          <button onClick={() => ignoreExpected(album.id)}>Ignore</button>
         </li>)}</ul>
       </div>
       <div>
