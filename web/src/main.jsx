@@ -19,6 +19,12 @@ const api = {
   post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 };
 
+const ARTWORK_PLACEHOLDER = '/artwork-placeholder.svg';
+
+function artworkUrl(albumId, size = 512) {
+  return `/api/artwork/album/${albumId}?size=${size}`;
+}
+
 const THEMES = [
   { id: 'neon-djent', name: 'Neon Djent', description: 'Industrial black with LED orange accents.' },
   { id: 'ice', name: 'Ice', description: 'Cold steel blue contrast for night sessions.' },
@@ -42,9 +48,12 @@ function TopBar({ scanStatus, onScan }) {
   </header>;
 }
 
-function AlbumTile({ album, onToggleOwned }) {
+function AlbumTile({ album, onToggleOwned, size = 512 }) {
   return <article className="album-tile">
-    <div className="artwork" />
+    <img className="artwork" src={artworkUrl(album.id, size)} alt={`${album.title} cover`} loading="lazy" onError={(e) => {
+      e.currentTarget.onerror = null;
+      e.currentTarget.src = ARTWORK_PLACEHOLDER;
+    }} />
     <div className="tile-meta"><strong>{album.title}</strong><span>{album.artistName}</span></div>
     <div className="tile-hover">
       <button>Play</button>
@@ -55,19 +64,20 @@ function AlbumTile({ album, onToggleOwned }) {
 }
 
 function Dashboard() {
+
   const [data, setData] = React.useState();
   React.useEffect(() => { api.get('/api/dashboard').then(setData).catch(() => setData(null)); }, []);
 
   return <div className="dashboard-grid">
     <div className="col-left">
       <AppCard title="Concerts" className="panel-metal"><ul><li>Connect event provider to populate shows.</li></ul></AppCard>
-      <AppCard title="Recent Activity" className="card-soft"><ul>{(data?.recent || []).slice(0, 8).map((a) => <li key={a.id}>{a.artistName} — {a.title}</li>)}</ul></AppCard>
+      <AppCard title="Recent Activity" className="card-soft"><div className="recent-cards">{(data?.recent || []).slice(0, 8).map((a) => <AlbumTile key={a.id} album={a} size={256} />)}</div></AppCard>
     </div>
     <div className="col-right">
       <AppCard title="New Releases" className="card-solid"><div className="album-grid">{(data?.recent || []).slice(0, 8).map((a) => <AlbumTile key={a.id} album={a} />)}</div></AppCard>
       <div className="mini-grid">
         <AppCard title="Library Overview" className="card-soft"><p>{data?.stats?.artists ?? '-'} artists · {data?.stats?.albums ?? '-'} albums · {data?.stats?.tracks ?? '-'} tracks</p></AppCard>
-        <AppCard title="Missing Albums" className="card-soft"><p>{data?.missingTotal ?? 0}</p></AppCard>
+        <AppCard title="Missing Albums" className="card-soft"><ul className="missing-list">{(data?.missing || []).slice(0, 6).map((item, idx) => <li key={`${item.artistId}-${item.title}-${idx}`}><img src={ARTWORK_PLACEHOLDER} alt="missing album" /><span>{item.artistName} — {item.title}</span></li>)}</ul><p>{data?.missingTotal ?? 0} total</p></AppCard>
         <AppCard title="Downloads" className="card-soft"><p>No active downloads</p></AppCard>
       </div>
     </div>
@@ -143,6 +153,28 @@ function ThemesTab({ activeTheme, onThemeChange }) {
   </button>)}</div>;
 }
 
+
+function LibraryArtworkSettings({ settings, setSettings, save }) {
+  const [jobStatus, setJobStatus] = React.useState({ queued: 0, running: 0, done: 0, error: 0 });
+  React.useEffect(() => {
+    const tick = () => api.get('/api/artwork/status').then(setJobStatus).catch(() => null);
+    tick();
+    const id = setInterval(tick, 2500);
+    return () => clearInterval(id);
+  }, []);
+
+  return <AppCard title="Library" className="card-soft">
+    <p>Path: {settings?.libraryPath || '-'}</p>
+    <label><input type="checkbox" checked={Boolean(settings?.artworkPreferLocal)} onChange={(e) => setSettings({ ...settings, artworkPreferLocal: e.target.checked })} /> Prefer local artwork</label>
+    <label><input type="checkbox" checked={Boolean(settings?.artworkAllowRemote)} onChange={(e) => setSettings({ ...settings, artworkAllowRemote: e.target.checked })} /> Allow remote artwork</label>
+    <div className="inline-filters">
+      <button onClick={save}>Save artwork settings</button>
+      <button onClick={() => api.post('/api/artwork/refresh-all')}>Refresh all artwork</button>
+    </div>
+    <p>Jobs — queued: {jobStatus.queued} · running: {jobStatus.running} · done: {jobStatus.done} · error: {jobStatus.error}</p>
+  </AppCard>;
+}
+
 function ScanSettings({ settings, setSettings }) {
   const [tab, setTab] = React.useState('general');
   const [scan, setScan] = React.useState();
@@ -172,7 +204,7 @@ function ScanSettings({ settings, setSettings }) {
     </nav>
 
     {tab === 'general' ? <AppCard title="General" className="card-soft"><p>General app preferences.</p></AppCard> : null}
-    {tab === 'library' ? <AppCard title="Library" className="card-soft"><p>Path: {settings?.libraryPath || '-'}</p></AppCard> : null}
+    {tab === 'library' ? <LibraryArtworkSettings settings={settings} setSettings={setSettings} save={save} /> : null}
     {tab === 'about' ? <AppCard title="About" className="card-soft"><p>CRATE PWA</p></AppCard> : null}
 
     {tab === 'scanner' ? <>

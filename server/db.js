@@ -54,7 +54,9 @@ function initDb() {
       lidarrBaseUrl TEXT NOT NULL DEFAULT '',
       lidarrApiKey TEXT NOT NULL DEFAULT '',
       lidarrQualityProfileId INTEGER,
-      lidarrRootFolderPath TEXT
+      lidarrRootFolderPath TEXT,
+      artworkPreferLocal INTEGER NOT NULL DEFAULT 1,
+      artworkAllowRemote INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS artists (
@@ -205,6 +207,30 @@ function initDb() {
       error TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS album_art (
+      albumId INTEGER PRIMARY KEY,
+      source TEXT NOT NULL,
+      originalPath TEXT,
+      remoteUrl TEXT,
+      etag TEXT,
+      lastFetchedAt INTEGER,
+      hash TEXT,
+      width INTEGER,
+      height INTEGER,
+      FOREIGN KEY(albumId) REFERENCES albums(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      payloadJson TEXT NOT NULL,
+      status TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      startedAt INTEGER,
+      finishedAt INTEGER,
+      error TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_albums_artist_deleted ON albums(artistId, deleted);
     CREATE INDEX IF NOT EXISTS idx_expected_artists_artist_id ON expected_artists(artistId);
     CREATE INDEX IF NOT EXISTS idx_file_index_inode ON file_index(inodeKey);
@@ -260,6 +286,12 @@ function initDb() {
   }
   if (!settingsColumns.some((column) => column.name === 'lidarrRootFolderPath')) {
     db.exec('ALTER TABLE settings ADD COLUMN lidarrRootFolderPath TEXT');
+  }
+  if (!settingsColumns.some((column) => column.name === 'artworkPreferLocal')) {
+    db.exec('ALTER TABLE settings ADD COLUMN artworkPreferLocal INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!settingsColumns.some((column) => column.name === 'artworkAllowRemote')) {
+    db.exec('ALTER TABLE settings ADD COLUMN artworkAllowRemote INTEGER NOT NULL DEFAULT 0');
   }
 
   const scanStateColumns = db.prepare('PRAGMA table_info(scan_state)').all();

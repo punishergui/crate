@@ -78,6 +78,16 @@ function createTestDb() {
       reason TEXT NOT NULL,
       createdAt TEXT NOT NULL
     );
+    CREATE TABLE jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      payloadJson TEXT NOT NULL,
+      status TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      startedAt INTEGER,
+      finishedAt INTEGER,
+      error TEXT
+    );
   `);
   return db;
 }
