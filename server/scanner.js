@@ -218,7 +218,7 @@ function hashFileFirstChunk(filePath) {
   }
 }
 
-function collectArtistTracks(artistPath, { recursive = false, maxDepth = 3 }, onSkip) {
+function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onSkip) {
   const out = [];
   const stack = [{ currentPath: artistPath, depth: 0 }];
 
@@ -300,10 +300,6 @@ class Scanner {
     this.cancelRequested = false;
   }
 
-  getStatus() {
-    return this.db.prepare('SELECT * FROM scan_state WHERE id = 1').get();
-  }
-
   requestCancel() {
     if (!this.running) return false;
     this.cancelRequested = true;
@@ -318,7 +314,8 @@ class Scanner {
     this.cancelRequested = false;
     const scanOptions = {
       recursive: options.recursive !== undefined ? Boolean(options.recursive) : true,
-      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 3
+      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 3,
+      artistId: Number.isInteger(options.artistId) ? options.artistId : null
     };
 
     setImmediate(() => this.runScan(libraryPath, scanOptions).catch((error) => {
@@ -416,8 +413,8 @@ class Scanner {
   buildTrackMetadata(track, artistName, seenAt) {
     const findCache = this.db.prepare('SELECT * FROM file_index WHERE path = ?');
     const upsertCache = this.db.prepare(`
-      INSERT INTO file_index(path, mtime, size, inodeKey, fileHash, ext, albumTag, albumArtistTag, artistTag, yearTag, lastScanAt)
-      VALUES(@path, @mtime, @size, @inodeKey, @fileHash, @ext, @albumTag, @albumArtistTag, @artistTag, @yearTag, @lastScanAt)
+      INSERT INTO file_index(path, mtime, size, inodeKey, fileHash, ext, albumTag, albumArtistTag, artistTag, yearTag, lastScanAt, lastSeenAt)
+      VALUES(@path, @mtime, @size, @inodeKey, @fileHash, @ext, @albumTag, @albumArtistTag, @artistTag, @yearTag, @lastScanAt, @lastSeenAt)
       ON CONFLICT(path) DO UPDATE SET
         mtime = excluded.mtime,
         size = excluded.size,
@@ -428,12 +425,13 @@ class Scanner {
         albumArtistTag = excluded.albumArtistTag,
         artistTag = excluded.artistTag,
         yearTag = excluded.yearTag,
-        lastScanAt = excluded.lastScanAt
+        lastScanAt = excluded.lastScanAt,
+        lastSeenAt = excluded.lastSeenAt
     `);
 
     const cached = findCache.get(track.path);
     if (cached && cached.mtime === track.mtime && cached.size === track.size) {
-      upsertCache.run({ ...cached, lastScanAt: seenAt });
+      upsertCache.run({ ...cached, lastScanAt: seenAt, lastSeenAt: seenAt });
       return {
         ...track,
         tagInfo: {
@@ -471,84 +469,136 @@ class Scanner {
       albumArtistTag: tagInfo?.albumArtist || null,
       artistTag: tagInfo?.artist || null,
       yearTag: tagInfo?.year || null,
-      lastScanAt: seenAt
+      lastScanAt: seenAt,
+      lastSeenAt: seenAt
     });
 
     return { ...track, tagInfo, albumTitle, albumArtistName, fileHash };
   }
 
+  normalizeSkipReason(reason) {
+    const value = String(reason || 'unknown').toLowerCase();
+    if (value.startsWith('unsupported-extension')) return 'unsupported extension';
+    if (value.startsWith('unreadable')) return 'unreadable';
+    if (value.startsWith('missing-tags')) return 'missing required tags';
+    if (value.startsWith('deduped')) return 'duplicate';
+    if (value.startsWith('parse-error')) return 'parse error';
+    return reason || 'other';
+  }
+
+  pushSkip(skipped, filePath, reason) {
+    skipped.push({ filePath, reason: this.normalizeSkipReason(reason) });
+  }
+
+  updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists, skippedFiles, skippedReasons, currentPath }) {
+    this.db.prepare(`
+      UPDATE scan_state
+      SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ?, skippedFiles = ?, skippedReasonsJson = ?, currentPath = ?
+      WHERE id = 1
+    `).run(scannedFiles, scannedAlbums, scannedArtists, skippedFiles, JSON.stringify(skippedReasons), currentPath || null);
+  }
+
+  recordSkipped(scanStartedAt, skipped) {
+    if (!skipped.length) return;
+    const insert = this.db.prepare('INSERT INTO scan_skipped(scanStartedAt, filePath, reason, createdAt) VALUES (?, ?, ?, ?)');
+    const createdAt = nowIso();
+    const runInsert = this.db.transaction((items) => {
+      for (const item of items) insert.run(scanStartedAt, item.filePath, item.reason, createdAt);
+    });
+    runInsert(skipped);
+  }
+
+  computeDedupeKey(metadata) {
+    if (metadata.inodeKey) return `inode:${metadata.inodeKey}`;
+    return `fallback:${metadata.size}:${Math.round(metadata.mtime || 0)}:${shortHash(metadata.path)}`;
+  }
+
+  getStatus() {
+    const row = this.db.prepare('SELECT * FROM scan_state WHERE id = 1').get();
+    const parsed = row?.skippedReasonsJson ? JSON.parse(row.skippedReasonsJson) : {};
+    return {
+      ...row,
+      skippedReasonsBreakdown: parsed
+    };
+  }
+
   async runScan(libraryPath, scanOptions = {}) {
     const seenAt = nowIso();
-    const tx = this.db.transaction(() => {
-      this.db.prepare(`
-        UPDATE scan_state
-        SET status = 'running', startedAt = ?, finishedAt = NULL, currentPath = NULL,
-            scannedFiles = 0, scannedAlbums = 0, scannedArtists = 0, error = NULL
-        WHERE id = 1
-      `).run(seenAt);
-    });
-    tx();
+    const scanArtistId = Number.isInteger(scanOptions.artistId) ? scanOptions.artistId : null;
+    this.db.prepare('DELETE FROM scan_skipped WHERE scanStartedAt < ?').run(seenAt);
+    this.db.prepare(`
+      UPDATE scan_state
+      SET status = 'running', startedAt = ?, finishedAt = NULL, currentPath = NULL,
+          scannedFiles = 0, scannedAlbums = 0, scannedArtists = 0, skippedFiles = 0, skippedReasonsJson = '{}', error = NULL
+      WHERE id = 1
+    `).run(seenAt);
 
     let scannedFiles = 0;
     let scannedAlbums = 0;
+    let skippedFiles = 0;
+    const skippedReasons = {};
     const artistsSeen = new Set();
 
     try {
-      if (!fs.existsSync(libraryPath)) {
-        throw new Error(`Library path does not exist: ${libraryPath}`);
-      }
+      if (!fs.existsSync(libraryPath)) throw new Error(`Library path does not exist: ${libraryPath}`);
 
-      let rootEntries = [];
-      try {
-        rootEntries = fs.readdirSync(libraryPath, { withFileTypes: true });
-      } catch {
-        rootEntries = [];
+      let artistDirs = [];
+      if (scanArtistId) {
+        const artist = this.db.prepare('SELECT id, name FROM artists WHERE id = ?').get(scanArtistId);
+        if (!artist) throw new Error(`Artist not found: ${scanArtistId}`);
+        artistDirs = [{ name: artist.name }];
+      } else {
+        let rootEntries = [];
+        try {
+          rootEntries = fs.readdirSync(libraryPath, { withFileTypes: true });
+        } catch {
+          rootEntries = [];
+        }
+        artistDirs = rootEntries.filter((entry) => entry.isDirectory() && !isHiddenName(entry.name)).sort((a,b)=>a.name.localeCompare(b.name));
       }
-
-      const artistDirs = rootEntries
-        .filter((entry) => entry.isDirectory() && !isHiddenName(entry.name))
-        .sort((a, b) => a.name.localeCompare(b.name));
 
       const seenDedupKeys = new Set();
       for (const artistEntry of artistDirs) {
         if (this.cancelRequested) break;
-
         const artistName = artistEntry.name;
         const artistPath = path.join(libraryPath, artistName);
-        this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(artistPath);
+        this.updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists: artistsSeen.size, skippedFiles, skippedReasons, currentPath: artistPath });
 
         const artistId = this.upsertArtist(artistName, seenAt);
         artistsSeen.add(artistId);
 
         const skipped = [];
-        const artistTracks = collectArtistTracks(
-          artistPath,
-          { recursive: scanOptions.recursive !== false, maxDepth: scanOptions.maxDepth || 3 },
-          (filePath, reason) => {
-            skipped.push({ filePath, reason });
-          }
-        );
+        const artistTracks = collectArtistTracks(artistPath, { recursive: scanOptions.recursive !== false, maxDepth: scanOptions.maxDepth || 3 }, (filePath, reason) => {
+          this.pushSkip(skipped, filePath, reason);
+        });
 
         const tracksByAlbum = new Map();
         for (const track of artistTracks) {
           if (this.cancelRequested) break;
-          const metadata = await this.buildTrackMetadata(track, artistName, seenAt);
+
+          let metadata;
+          try {
+            metadata = await this.buildTrackMetadata(track, artistName, seenAt);
+          } catch (error) {
+            this.pushSkip(skipped, track.path, `parse-error:${error.message || error}`);
+            continue;
+          }
 
           if (!metadata.albumTitle) {
-            skipped.push({ filePath: track.path, reason: 'missing-tags-or-album-name' });
+            this.pushSkip(skipped, track.path, 'missing-tags-or-album-name');
             continue;
           }
 
           const normalizedTaggedArtist = normalizeCompareValue(metadata.albumArtistName);
           const normalizedArtist = normalizeCompareValue(artistName);
           if (normalizedArtist && normalizedTaggedArtist && normalizedArtist !== normalizedTaggedArtist) {
-            skipped.push({ filePath: track.path, reason: `artist-tag-mismatch:${metadata.albumArtistName}` });
+            this.pushSkip(skipped, track.path, `missing-tags-artist-mismatch:${metadata.albumArtistName}`);
             continue;
           }
 
-          const dedupeKey = metadata.inodeKey || metadata.fileHash || `${metadata.path}:${metadata.mtime}:${metadata.size}`;
+          const dedupeKey = this.computeDedupeKey(metadata);
           if (seenDedupKeys.has(dedupeKey)) {
-            skipped.push({ filePath: track.path, reason: `deduped:${dedupeKey}` });
+            this.pushSkip(skipped, track.path, `deduped:${dedupeKey}`);
             continue;
           }
           seenDedupKeys.add(dedupeKey);
@@ -567,43 +617,38 @@ class Scanner {
         if (this.cancelRequested) break;
 
         for (const albumCandidate of tracksByAlbum.values()) {
-          this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(albumCandidate.albumPath);
-          const trackCount = this.syncAlbum({
-            artistId,
-            title: albumCandidate.title,
-            albumPath: albumCandidate.albumPath,
-            tracks: albumCandidate.tracks,
-            seenAt
-          });
+          this.updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists: artistsSeen.size, skippedFiles, skippedReasons, currentPath: albumCandidate.albumPath });
+          const trackCount = this.syncAlbum({ artistId, title: albumCandidate.title, albumPath: albumCandidate.albumPath, tracks: albumCandidate.tracks, seenAt });
           if (!trackCount) continue;
-
           scannedAlbums += 1;
           scannedFiles += trackCount;
-          this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
-            scannedFiles,
-            scannedAlbums,
-            artistsSeen.size
-          );
         }
 
-        for (const item of skipped.slice(0, 200)) {
-          console.info(`[scanner] skip artist="${artistName}" path="${item.filePath}" reason="${item.reason}"`);
+        for (const item of skipped) {
+          skippedFiles += 1;
+          skippedReasons[item.reason] = (skippedReasons[item.reason] || 0) + 1;
         }
+        this.recordSkipped(seenAt, skipped);
+        this.updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists: artistsSeen.size, skippedFiles, skippedReasons, currentPath: artistPath });
       }
 
       const finishedAt = nowIso();
       this.db.transaction(() => {
-        this.db.prepare('UPDATE tracks SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
-        this.db.prepare('UPDATE albums SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
-        this.db.prepare('UPDATE artists SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
-        this.db.prepare('DELETE FROM file_index WHERE lastScanAt < ?').run(seenAt);
+        if (!scanArtistId) {
+          this.db.prepare('UPDATE tracks SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
+          this.db.prepare('UPDATE albums SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
+          this.db.prepare('UPDATE artists SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
+        }
+        if (!scanArtistId) {
+          this.db.prepare('DELETE FROM file_index WHERE lastScanAt < ?').run(seenAt);
+        }
         this.db.prepare('UPDATE settings SET lastScanAt = ? WHERE id = 1').run(finishedAt);
         this.db.prepare(`
           UPDATE scan_state
           SET status = ?, finishedAt = ?, currentPath = NULL,
-              scannedFiles = ?, scannedAlbums = ?, scannedArtists = ?, error = NULL
+              scannedFiles = ?, scannedAlbums = ?, scannedArtists = ?, skippedFiles = ?, skippedReasonsJson = ?, error = NULL
           WHERE id = 1
-        `).run(this.cancelRequested ? 'cancelled' : 'idle', finishedAt, scannedFiles, scannedAlbums, artistsSeen.size);
+        `).run(this.cancelRequested ? 'cancelled' : 'idle', finishedAt, scannedFiles, scannedAlbums, artistsSeen.size, skippedFiles, JSON.stringify(skippedReasons));
       })();
     } catch (error) {
       this.db.prepare(`

@@ -102,7 +102,16 @@ function initDb() {
       albumArtistTag TEXT,
       artistTag TEXT,
       yearTag TEXT,
-      lastScanAt TEXT NOT NULL
+      lastScanAt TEXT NOT NULL,
+      lastSeenAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS scan_skipped (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scanStartedAt TEXT NOT NULL,
+      filePath TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      createdAt TEXT NOT NULL
     );
 
 
@@ -189,6 +198,8 @@ function initDb() {
       scannedFiles INTEGER NOT NULL DEFAULT 0,
       scannedAlbums INTEGER NOT NULL DEFAULT 0,
       scannedArtists INTEGER NOT NULL DEFAULT 0,
+      skippedFiles INTEGER NOT NULL DEFAULT 0,
+      skippedReasonsJson TEXT NOT NULL DEFAULT '{}',
       error TEXT
     );
 
@@ -247,6 +258,19 @@ function initDb() {
   }
   if (!settingsColumns.some((column) => column.name === 'lidarrRootFolderPath')) {
     db.exec('ALTER TABLE settings ADD COLUMN lidarrRootFolderPath TEXT');
+  }
+
+  const scanStateColumns = db.prepare('PRAGMA table_info(scan_state)').all();
+  if (!scanStateColumns.some((column) => column.name === 'skippedFiles')) {
+    db.exec('ALTER TABLE scan_state ADD COLUMN skippedFiles INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!scanStateColumns.some((column) => column.name === 'skippedReasonsJson')) {
+    db.exec("ALTER TABLE scan_state ADD COLUMN skippedReasonsJson TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  const fileIndexColumns = db.prepare('PRAGMA table_info(file_index)').all();
+  if (!fileIndexColumns.some((column) => column.name === 'lastSeenAt')) {
+    db.exec('ALTER TABLE file_index ADD COLUMN lastSeenAt TEXT');
   }
 
   db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();
