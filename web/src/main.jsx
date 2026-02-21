@@ -285,6 +285,7 @@ function ArtistPage() {
 
 function Settings({ settings, setSettings }) {
   const [scan, setScan] = React.useState();
+  const [scanMessage, setScanMessage] = React.useState('');
   const [form, setForm] = React.useState(settings);
   React.useEffect(() => setForm(settings), [settings]);
   React.useEffect(() => {
@@ -300,6 +301,21 @@ function Settings({ settings, setSettings }) {
     setSettings(next);
   };
 
+  const startRecursiveFixScan = async () => {
+    const result = await api.post('/api/scan/start', { recursive: true, maxDepth: 6 });
+    setScan(result.status);
+    setScanMessage('Started recursive scan to adopt subfolder albums.');
+  };
+
+  React.useEffect(() => {
+    if (!scan) return;
+    if (scan.status === 'idle' && scan.finishedAt) {
+      setScanMessage(`Scan complete: ${scan.scannedArtists} artists, ${scan.scannedAlbums} albums, ${scan.scannedFiles} files.`);
+    } else if (scan.status === 'error' && scan.error) {
+      setScanMessage(`Scan failed: ${scan.error}`);
+    }
+  }, [scan]);
+
   return <section><h1>Settings</h1>
     <label>Accent <input value={form.accentColor || ''} onChange={(e) => setForm({ ...form, accentColor: e.target.value })} /></label>
     <label>Noise <input type="checkbox" checked={Boolean(form.noiseOverlay)} onChange={(e) => setForm({ ...form, noiseOverlay: e.target.checked })} /></label>
@@ -309,8 +325,10 @@ function Settings({ settings, setSettings }) {
     <label>Lidarr Quality Profile ID (optional) <input value={form.lidarrQualityProfileId || ''} onChange={(e) => setForm({ ...form, lidarrQualityProfileId: e.target.value ? Number(e.target.value) : null })} /></label>
     <label>Lidarr Root Folder Path (optional) <input value={form.lidarrRootFolderPath || ''} onChange={(e) => setForm({ ...form, lidarrRootFolderPath: e.target.value })} placeholder="/music" /></label>
     <button onClick={save}>Save</button>
-    <button onClick={() => api.post('/api/scan/start').then((v) => setScan(v.status))}>Scan Now</button>
+    <button onClick={() => api.post('/api/scan/start', { recursive: true }).then((v) => { setScan(v.status); setScanMessage('Started standard recursive scan.'); })}>Scan Now</button>
+    <button onClick={startRecursiveFixScan}>Fix Library / Adopt Subfolder Albums</button>
     <button onClick={() => api.post('/api/scan/cancel').then((v) => setScan(v.status))}>Cancel Scan</button>
+    {scanMessage ? <p>{scanMessage}</p> : null}
     <pre>{JSON.stringify(scan, null, 2)}</pre>
   </section>;
 }

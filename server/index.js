@@ -270,14 +270,30 @@ app.put('/api/settings', async (req, reply) => {
 
 app.get('/api/stats', async () => getStats());
 
-app.post('/api/scan/start', async () => {
+app.post('/api/scan/start', async (req, reply) => {
+  const payload = req.body || {};
+  if ('maxDepth' in payload && (!Number.isInteger(payload.maxDepth) || payload.maxDepth < 1 || payload.maxDepth > 20)) {
+    return reply.code(400).send({ error: 'maxDepth must be an integer between 1 and 20' });
+  }
+
   const settings = getSettings();
-  return scanner.startScan(settings.libraryPath);
+  return scanner.startScan(settings.libraryPath, {
+    recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
+    maxDepth: payload.maxDepth
+  });
 });
 
-app.post('/api/scan', async () => {
+app.post('/api/scan', async (req, reply) => {
+  const payload = req.body || {};
+  if ('maxDepth' in payload && (!Number.isInteger(payload.maxDepth) || payload.maxDepth < 1 || payload.maxDepth > 20)) {
+    return reply.code(400).send({ error: 'maxDepth must be an integer between 1 and 20' });
+  }
+
   const settings = getSettings();
-  return scanner.startScan(settings.libraryPath);
+  return scanner.startScan(settings.libraryPath, {
+    recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
+    maxDepth: payload.maxDepth
+  });
 });
 
 app.get('/api/scan/status', async () => scanner.getStatus());
