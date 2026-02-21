@@ -317,6 +317,31 @@ app.get('/api/scan/skipped', async (req, reply) => {
   `).all(startedAt, limit);
 });
 
+app.post('/api/scan/artist/:id/deep', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+
+  const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  if (!artist) {
+    return reply.code(404).send({ error: 'Artist not found' });
+  }
+
+  const payload = req.body || {};
+  if ('maxDepth' in payload && (!Number.isInteger(payload.maxDepth) || payload.maxDepth < 1 || payload.maxDepth > 20)) {
+    return reply.code(400).send({ error: 'maxDepth must be an integer between 1 and 20' });
+  }
+
+  const settings = getSettings();
+  return scanner.startScan(settings.libraryPath, {
+    recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
+    maxDepth: payload.maxDepth,
+    artistId
+  });
+});
+
+
 app.post('/api/artist/:id/scan/deep', async (req, reply) => {
   const artistId = Number(req.params.id);
   if (!Number.isInteger(artistId) || artistId < 1) {

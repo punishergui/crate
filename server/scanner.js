@@ -207,6 +207,10 @@ function getStatInodeKey(stat) {
   return `${stat.dev}:${stat.ino}`;
 }
 
+function normalizePathForHash(filePath) {
+  return String(filePath || '').replace(/\\/g, '/').toLowerCase();
+}
+
 function hashFileFirstChunk(filePath) {
   const fd = fs.openSync(filePath, 'r');
   try {
@@ -285,6 +289,8 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onS
         ext: path.extname(entry.name).toLowerCase().slice(1),
         mtime: stat.mtimeMs,
         size: stat.size,
+        inode: Number.isInteger(stat.ino) ? stat.ino : null,
+        device: Number.isInteger(stat.dev) ? stat.dev : null,
         inodeKey: getStatInodeKey(stat)
       });
     }
@@ -413,11 +419,13 @@ class Scanner {
   buildTrackMetadata(track, artistName, seenAt) {
     const findCache = this.db.prepare('SELECT * FROM file_index WHERE path = ?');
     const upsertCache = this.db.prepare(`
-      INSERT INTO file_index(path, mtime, size, inodeKey, fileHash, ext, albumTag, albumArtistTag, artistTag, yearTag, lastScanAt, lastSeenAt)
-      VALUES(@path, @mtime, @size, @inodeKey, @fileHash, @ext, @albumTag, @albumArtistTag, @artistTag, @yearTag, @lastScanAt, @lastSeenAt)
+      INSERT INTO file_index(path, mtime, size, inode, device, inodeKey, fileHash, ext, albumTag, albumArtistTag, artistTag, yearTag, lastScanAt, lastSeenAt)
+      VALUES(@path, @mtime, @size, @inode, @device, @inodeKey, @fileHash, @ext, @albumTag, @albumArtistTag, @artistTag, @yearTag, @lastScanAt, @lastSeenAt)
       ON CONFLICT(path) DO UPDATE SET
         mtime = excluded.mtime,
         size = excluded.size,
+        inode = excluded.inode,
+        device = excluded.device,
         inodeKey = excluded.inodeKey,
         fileHash = excluded.fileHash,
         ext = excluded.ext,
@@ -441,6 +449,8 @@ class Scanner {
           year: cached.yearTag
         },
         inodeKey: cached.inodeKey,
+        inode: cached.inode,
+        device: cached.device,
         fileHash: cached.fileHash,
         albumTitle: cached.albumTag,
         albumArtistName: resolveArtistNameFromTags({ albumArtist: cached.albumArtistTag, artist: cached.artistTag }, artistName)
@@ -462,6 +472,8 @@ class Scanner {
       path: track.path,
       mtime: track.mtime,
       size: track.size,
+      inode: track.inode,
+      device: track.device,
       inodeKey: track.inodeKey,
       fileHash,
       ext: track.ext,
@@ -479,8 +491,9 @@ class Scanner {
   normalizeSkipReason(reason) {
     const value = String(reason || 'unknown').toLowerCase();
     if (value.startsWith('unsupported-extension')) return 'unsupported extension';
-    if (value.startsWith('unreadable')) return 'unreadable';
-    if (value.startsWith('missing-tags')) return 'missing required tags';
+    if (value.startsWith('unreadable') || value.startsWith('unreadable-directory') || value.startsWith('unreadable-path')) return 'unreadable';
+    if (value.startsWith('missing-album-tag')) return 'missing album tag';
+    if (value.startsWith('missing-artist-tag')) return 'missing artist tag';
     if (value.startsWith('deduped')) return 'duplicate';
     if (value.startsWith('parse-error')) return 'parse error';
     return reason || 'other';
@@ -510,7 +523,7 @@ class Scanner {
 
   computeDedupeKey(metadata) {
     if (metadata.inodeKey) return `inode:${metadata.inodeKey}`;
-    return `fallback:${metadata.size}:${Math.round(metadata.mtime || 0)}:${shortHash(metadata.path)}`;
+    return `fallback:${metadata.size}:${Math.round(metadata.mtime || 0)}:${shortHash(normalizePathForHash(metadata.path))}`;
   }
 
   getStatus() {
@@ -584,15 +597,20 @@ class Scanner {
             continue;
           }
 
-          if (!metadata.albumTitle) {
-            this.pushSkip(skipped, track.path, 'missing-tags-or-album-name');
+          if (!metadata.tagInfo?.album) {
+            this.pushSkip(skipped, track.path, 'missing-album-tag');
+            continue;
+          }
+
+          if (!metadata.tagInfo?.albumArtist && !metadata.tagInfo?.artist) {
+            this.pushSkip(skipped, track.path, 'missing-artist-tag');
             continue;
           }
 
           const normalizedTaggedArtist = normalizeCompareValue(metadata.albumArtistName);
           const normalizedArtist = normalizeCompareValue(artistName);
           if (normalizedArtist && normalizedTaggedArtist && normalizedArtist !== normalizedTaggedArtist) {
-            this.pushSkip(skipped, track.path, `missing-tags-artist-mismatch:${metadata.albumArtistName}`);
+            this.pushSkip(skipped, track.path, `missing-artist-tag:mismatch:${metadata.albumArtistName}`);
             continue;
           }
 

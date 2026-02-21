@@ -95,6 +95,8 @@ function initDb() {
       path TEXT PRIMARY KEY,
       mtime INTEGER NOT NULL,
       size INTEGER NOT NULL,
+      inode INTEGER,
+      device INTEGER,
       inodeKey TEXT,
       fileHash TEXT,
       ext TEXT NOT NULL,
@@ -271,6 +273,14 @@ function initDb() {
   const fileIndexColumns = db.prepare('PRAGMA table_info(file_index)').all();
   if (!fileIndexColumns.some((column) => column.name === 'lastSeenAt')) {
     db.exec('ALTER TABLE file_index ADD COLUMN lastSeenAt TEXT');
+  }
+
+
+  if (!fileIndexColumns.some((column) => column.name === 'inode')) {
+    db.exec('ALTER TABLE file_index ADD COLUMN inode INTEGER');
+  }
+  if (!fileIndexColumns.some((column) => column.name === 'device')) {
+    db.exec('ALTER TABLE file_index ADD COLUMN device INTEGER');
   }
 
   db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();
