@@ -17,48 +17,6 @@ function isAudioFileName(name) {
   return AUDIO_EXTS.has(path.extname(name).toLowerCase());
 }
 
-function collectAudioFiles(startPath, { recursive }) {
-  const out = [];
-  const stack = [startPath];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    let entries = [];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (isHiddenName(entry.name)) continue;
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (recursive) {
-          stack.push(fullPath);
-        }
-        continue;
-      }
-      if (!entry.isFile() || !isAudioFileName(entry.name)) continue;
-
-      let stat;
-      try {
-        stat = fs.statSync(fullPath);
-      } catch {
-        continue;
-      }
-
-      out.push({
-        path: fullPath,
-        ext: path.extname(entry.name).toLowerCase().slice(1),
-        mtime: stat.mtimeMs
-      });
-    }
-  }
-
-  return out;
-}
-
 function normalizeCompareValue(value) {
   return String(value || '')
     .toLowerCase()
@@ -183,71 +141,156 @@ function parseFlacVorbisComments(filePath) {
   }
 }
 
-async function readAlbumFromTags(track, artistName) {
-  if (track.ext !== 'flac') return null;
+function decodeId3v1Text(buffer, start, length) {
+  return buffer
+    .toString('latin1', start, start + length)
+    .replace(/\0+$/g, '')
+    .trim();
+}
+
+function parseMp3Id3v1(filePath) {
+  const stat = fs.statSync(filePath);
+  if (stat.size < 128) return null;
+
+  const fd = fs.openSync(filePath, 'r');
   try {
-    const comments = parseFlacVorbisComments(track.path);
-    if (!comments) return null;
+    const tag = Buffer.alloc(128);
+    if (fs.readSync(fd, tag, 0, 128, stat.size - 128) !== 128) return null;
+    if (tag.toString('ascii', 0, 3) !== 'TAG') return null;
 
-    const album = comments.get('ALBUM')?.[0];
+    const title = decodeId3v1Text(tag, 3, 30);
+    const artist = decodeId3v1Text(tag, 33, 30);
+    const album = decodeId3v1Text(tag, 63, 30);
+    const year = decodeId3v1Text(tag, 93, 4);
     if (!album) return null;
-
-    const taggedArtist = comments.get('ALBUMARTIST')?.[0] || comments.get('ARTIST')?.[0];
-    if (taggedArtist) {
-      const normalizedTagged = normalizeCompareValue(taggedArtist);
-      const normalizedArtist = normalizeCompareValue(artistName);
-      if (normalizedArtist && normalizedTagged && normalizedArtist !== normalizedTagged) {
-        return null;
-      }
-    }
 
     return {
       album,
-      year: comments.get('DATE')?.[0] || comments.get('YEAR')?.[0] || null
+      albumArtist: artist || null,
+      artist: artist || null,
+      year: year || null,
+      title: title || null
     };
-  } catch {
-    return null;
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
-async function groupLooseRootTracks({ artistName, artistPath, looseRootTracks }) {
-  const groups = new Map();
-  const catchAll = [];
+function readTags(track) {
+  if (track.ext === 'flac') {
+    const comments = parseFlacVorbisComments(track.path);
+    if (!comments) return null;
+    return {
+      album: comments.get('ALBUM')?.[0] || null,
+      albumArtist: comments.get('ALBUMARTIST')?.[0] || null,
+      artist: comments.get('ARTIST')?.[0] || null,
+      year: comments.get('DATE')?.[0] || comments.get('YEAR')?.[0] || null
+    };
+  }
+  if (track.ext === 'mp3') {
+    return parseMp3Id3v1(track.path);
+  }
+  return null;
+}
 
-  for (const track of looseRootTracks) {
-    const tagInfo = await readAlbumFromTags(track, artistName);
-    const albumTitle = tagInfo?.album || parseAlbumFromFilename(track.path, artistName);
-    if (!albumTitle) {
-      catchAll.push(track);
+function resolveArtistNameFromTags(tagInfo, fallbackArtistName) {
+  return tagInfo?.albumArtist || tagInfo?.artist || fallbackArtistName;
+}
+
+function buildAlbumGroupKey(albumName, albumArtistName) {
+  return `${normalizeCompareValue(albumArtistName)}::${normalizeCompareValue(albumName)}`;
+}
+
+function getStatInodeKey(stat) {
+  if (!stat || !Number.isInteger(stat.dev) || !Number.isInteger(stat.ino)) return null;
+  if (stat.ino <= 0) return null;
+  return `${stat.dev}:${stat.ino}`;
+}
+
+function hashFileFirstChunk(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const chunk = Buffer.alloc(1024 * 1024);
+    const bytesRead = fs.readSync(fd, chunk, 0, chunk.length, 0);
+    return crypto.createHash('sha1').update(chunk.subarray(0, bytesRead)).digest('hex').slice(0, 16);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function collectArtistTracks(artistPath, { recursive = false, maxDepth = 3 }, onSkip) {
+  const out = [];
+  const stack = [{ currentPath: artistPath, depth: 0 }];
+
+  while (stack.length > 0) {
+    const { currentPath, depth } = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentPath, { withFileTypes: true });
+    } catch (error) {
+      onSkip?.(currentPath, `unreadable-directory: ${error.message}`);
       continue;
     }
 
-    const key = albumTitle;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        title: albumTitle,
-        albumPath: createVirtualAlbumPath(artistPath, albumTitle),
-        tracks: []
+    for (const entry of entries) {
+      const fullPath = path.join(currentPath, entry.name);
+      if (isHiddenName(entry.name)) {
+        onSkip?.(fullPath, 'hidden-path');
+        continue;
+      }
+
+      let lst;
+      try {
+        lst = fs.lstatSync(fullPath);
+      } catch (error) {
+        onSkip?.(fullPath, `unreadable-path: ${error.message}`);
+        continue;
+      }
+
+      const isSymlink = lst.isSymbolicLink();
+      let stat = lst;
+      if (isSymlink) {
+        try {
+          stat = fs.statSync(fullPath);
+        } catch (error) {
+          onSkip?.(fullPath, `broken-symlink: ${error.message}`);
+          continue;
+        }
+      }
+
+      const isDir = stat.isDirectory();
+      const isFile = stat.isFile();
+      if (isDir) {
+        if (!recursive && depth >= 0) continue;
+        if (depth + 1 > maxDepth) {
+          onSkip?.(fullPath, `depth-exceeded:${maxDepth}`);
+          continue;
+        }
+        stack.push({ currentPath: fullPath, depth: depth + 1 });
+        continue;
+      }
+
+      if (!isFile) {
+        onSkip?.(fullPath, 'unsupported-file-type');
+        continue;
+      }
+
+      if (!isAudioFileName(entry.name)) {
+        onSkip?.(fullPath, `unsupported-extension:${path.extname(entry.name).toLowerCase() || 'none'}`);
+        continue;
+      }
+
+      out.push({
+        path: fullPath,
+        ext: path.extname(entry.name).toLowerCase().slice(1),
+        mtime: stat.mtimeMs,
+        size: stat.size,
+        inodeKey: getStatInodeKey(stat)
       });
     }
-    groups.get(key).tracks.push(track);
   }
 
-  const groupedAlbums = Array.from(groups.values()).sort((a, b) => a.title.localeCompare(b.title));
-  const topNames = groupedAlbums.slice(0, 5).map((group) => group.title).join(', ');
-  console.debug(
-    `[scanner] artist="${artistName}" detectedAlbumGroups=${groupedAlbums.length} topAlbumNames="${topNames || 'none'}"`
-  );
-
-  if (catchAll.length > 0) {
-    groupedAlbums.push({
-      title: 'Loose Tracks',
-      albumPath: createVirtualAlbumPath(artistPath, 'Loose Tracks'),
-      tracks: catchAll
-    });
-  }
-
-  return groupedAlbums;
+  return out;
 }
 
 class Scanner {
@@ -267,13 +310,18 @@ class Scanner {
     return true;
   }
 
-  startScan(libraryPath) {
+  startScan(libraryPath, options = {}) {
     if (this.running) {
       return { started: false, status: this.getStatus() };
     }
     this.running = true;
     this.cancelRequested = false;
-    setImmediate(() => this.runScan(libraryPath).catch((error) => {
+    const scanOptions = {
+      recursive: options.recursive !== undefined ? Boolean(options.recursive) : true,
+      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 3
+    };
+
+    setImmediate(() => this.runScan(libraryPath, scanOptions).catch((error) => {
       this.db.prepare(`
         UPDATE scan_state
         SET status = 'error', finishedAt = ?, error = ?, currentPath = NULL
@@ -365,7 +413,71 @@ class Scanner {
     return tracks.length;
   }
 
-  async runScan(libraryPath) {
+  buildTrackMetadata(track, artistName, seenAt) {
+    const findCache = this.db.prepare('SELECT * FROM file_index WHERE path = ?');
+    const upsertCache = this.db.prepare(`
+      INSERT INTO file_index(path, mtime, size, inodeKey, fileHash, ext, albumTag, albumArtistTag, artistTag, yearTag, lastScanAt)
+      VALUES(@path, @mtime, @size, @inodeKey, @fileHash, @ext, @albumTag, @albumArtistTag, @artistTag, @yearTag, @lastScanAt)
+      ON CONFLICT(path) DO UPDATE SET
+        mtime = excluded.mtime,
+        size = excluded.size,
+        inodeKey = excluded.inodeKey,
+        fileHash = excluded.fileHash,
+        ext = excluded.ext,
+        albumTag = excluded.albumTag,
+        albumArtistTag = excluded.albumArtistTag,
+        artistTag = excluded.artistTag,
+        yearTag = excluded.yearTag,
+        lastScanAt = excluded.lastScanAt
+    `);
+
+    const cached = findCache.get(track.path);
+    if (cached && cached.mtime === track.mtime && cached.size === track.size) {
+      upsertCache.run({ ...cached, lastScanAt: seenAt });
+      return {
+        ...track,
+        tagInfo: {
+          album: cached.albumTag,
+          albumArtist: cached.albumArtistTag,
+          artist: cached.artistTag,
+          year: cached.yearTag
+        },
+        inodeKey: cached.inodeKey,
+        fileHash: cached.fileHash,
+        albumTitle: cached.albumTag,
+        albumArtistName: resolveArtistNameFromTags({ albumArtist: cached.albumArtistTag, artist: cached.artistTag }, artistName)
+      };
+    }
+
+    let tagInfo = null;
+    try {
+      tagInfo = readTags(track);
+    } catch {
+      tagInfo = null;
+    }
+
+    const albumTitle = tagInfo?.album || parseAlbumFromFilename(track.path, artistName) || null;
+    const albumArtistName = resolveArtistNameFromTags(tagInfo, artistName);
+    const fileHash = !track.inodeKey ? hashFileFirstChunk(track.path) : null;
+
+    upsertCache.run({
+      path: track.path,
+      mtime: track.mtime,
+      size: track.size,
+      inodeKey: track.inodeKey,
+      fileHash,
+      ext: track.ext,
+      albumTag: tagInfo?.album || null,
+      albumArtistTag: tagInfo?.albumArtist || null,
+      artistTag: tagInfo?.artist || null,
+      yearTag: tagInfo?.year || null,
+      lastScanAt: seenAt
+    });
+
+    return { ...track, tagInfo, albumTitle, albumArtistName, fileHash };
+  }
+
+  async runScan(libraryPath, scanOptions = {}) {
     const seenAt = nowIso();
     const tx = this.db.transaction(() => {
       this.db.prepare(`
@@ -397,6 +509,7 @@ class Scanner {
         .filter((entry) => entry.isDirectory() && !isHiddenName(entry.name))
         .sort((a, b) => a.name.localeCompare(b.name));
 
+      const seenDedupKeys = new Set();
       for (const artistEntry of artistDirs) {
         if (this.cancelRequested) break;
 
@@ -407,56 +520,53 @@ class Scanner {
         const artistId = this.upsertArtist(artistName, seenAt);
         artistsSeen.add(artistId);
 
-        let artistEntries = [];
-        try {
-          artistEntries = fs.readdirSync(artistPath, { withFileTypes: true });
-        } catch {
-          artistEntries = [];
-        }
+        const skipped = [];
+        const artistTracks = collectArtistTracks(
+          artistPath,
+          { recursive: scanOptions.recursive !== false, maxDepth: scanOptions.maxDepth || 3 },
+          (filePath, reason) => {
+            skipped.push({ filePath, reason });
+          }
+        );
 
-        const albumFolders = artistEntries
-          .filter((entry) => entry.isDirectory() && !isHiddenName(entry.name))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-        const albumCandidates = [];
-        for (const albumEntry of albumFolders) {
+        const tracksByAlbum = new Map();
+        for (const track of artistTracks) {
           if (this.cancelRequested) break;
-          const albumPath = path.join(artistPath, albumEntry.name);
-          const albumTracks = collectAudioFiles(albumPath, { recursive: true });
-          if (albumTracks.length === 0) continue;
-          albumCandidates.push({
-            title: deriveAlbumTitleFromFolderName(albumEntry.name),
-            albumPath,
-            tracks: albumTracks
-          });
+          const metadata = await this.buildTrackMetadata(track, artistName, seenAt);
+
+          if (!metadata.albumTitle) {
+            skipped.push({ filePath: track.path, reason: 'missing-tags-or-album-name' });
+            continue;
+          }
+
+          const normalizedTaggedArtist = normalizeCompareValue(metadata.albumArtistName);
+          const normalizedArtist = normalizeCompareValue(artistName);
+          if (normalizedArtist && normalizedTaggedArtist && normalizedArtist !== normalizedTaggedArtist) {
+            skipped.push({ filePath: track.path, reason: `artist-tag-mismatch:${metadata.albumArtistName}` });
+            continue;
+          }
+
+          const dedupeKey = metadata.inodeKey || metadata.fileHash || `${metadata.path}:${metadata.mtime}:${metadata.size}`;
+          if (seenDedupKeys.has(dedupeKey)) {
+            skipped.push({ filePath: track.path, reason: `deduped:${dedupeKey}` });
+            continue;
+          }
+          seenDedupKeys.add(dedupeKey);
+
+          const albumGroupKey = buildAlbumGroupKey(metadata.albumTitle, metadata.albumArtistName);
+          if (!tracksByAlbum.has(albumGroupKey)) {
+            tracksByAlbum.set(albumGroupKey, {
+              title: metadata.albumTitle,
+              albumPath: createVirtualAlbumPath(artistPath, `${metadata.albumArtistName}-${metadata.albumTitle}`),
+              tracks: []
+            });
+          }
+          tracksByAlbum.get(albumGroupKey).tracks.push(track);
         }
 
         if (this.cancelRequested) break;
 
-        const looseRootTracks = artistEntries
-          .filter((entry) => entry.isFile() && !isHiddenName(entry.name) && isAudioFileName(entry.name))
-          .map((entry) => {
-            const fullPath = path.join(artistPath, entry.name);
-            let stat;
-            try {
-              stat = fs.statSync(fullPath);
-            } catch {
-              return null;
-            }
-            return {
-              path: fullPath,
-              ext: path.extname(entry.name).toLowerCase().slice(1),
-              mtime: stat.mtimeMs
-            };
-          })
-          .filter(Boolean);
-
-        console.debug(
-          `[scanner] artist="${artistName}" subfolderAlbumCount=${albumCandidates.length} looseRootTrackCount=${looseRootTracks.length}`
-        );
-
-        for (const albumCandidate of albumCandidates) {
-          if (this.cancelRequested) break;
+        for (const albumCandidate of tracksByAlbum.values()) {
           this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(albumCandidate.albumPath);
           const trackCount = this.syncAlbum({
             artistId,
@@ -476,47 +586,8 @@ class Scanner {
           );
         }
 
-        if (this.cancelRequested) break;
-
-        if (looseRootTracks.length > 0) {
-          this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(artistPath);
-          const groupedLooseAlbums = await groupLooseRootTracks({ artistName, artistPath, looseRootTracks });
-          for (const looseAlbum of groupedLooseAlbums) {
-            const trackCount = this.syncAlbum({
-              artistId,
-              title: looseAlbum.title,
-              albumPath: looseAlbum.albumPath,
-              seenAt,
-              tracks: looseAlbum.tracks
-            });
-            if (!trackCount) continue;
-            scannedAlbums += 1;
-            scannedFiles += trackCount;
-            this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
-              scannedFiles,
-              scannedAlbums,
-              artistsSeen.size
-            );
-          }
-        } else if (albumCandidates.length === 0) {
-          const rootTracks = collectAudioFiles(artistPath, { recursive: true });
-          if (rootTracks.length > 0) {
-            this.db.prepare('UPDATE scan_state SET currentPath = ? WHERE id = 1').run(artistPath);
-            const rootTrackCount = this.syncAlbum({
-              artistId,
-              title: 'Loose Tracks',
-              albumPath: createVirtualAlbumPath(artistPath, 'Loose Tracks'),
-              seenAt,
-              tracks: rootTracks
-            });
-            scannedAlbums += 1;
-            scannedFiles += rootTrackCount;
-            this.db.prepare('UPDATE scan_state SET scannedFiles = ?, scannedAlbums = ?, scannedArtists = ? WHERE id = 1').run(
-              scannedFiles,
-              scannedAlbums,
-              artistsSeen.size
-            );
-          }
+        for (const item of skipped.slice(0, 200)) {
+          console.info(`[scanner] skip artist="${artistName}" path="${item.filePath}" reason="${item.reason}"`);
         }
       }
 
@@ -525,6 +596,7 @@ class Scanner {
         this.db.prepare('UPDATE tracks SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
         this.db.prepare('UPDATE albums SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
         this.db.prepare('UPDATE artists SET deleted = 1 WHERE lastSeen < ?').run(seenAt);
+        this.db.prepare('DELETE FROM file_index WHERE lastScanAt < ?').run(seenAt);
         this.db.prepare('UPDATE settings SET lastScanAt = ? WHERE id = 1').run(finishedAt);
         this.db.prepare(`
           UPDATE scan_state
@@ -546,4 +618,4 @@ class Scanner {
   }
 }
 
-module.exports = { Scanner, deriveAlbumTitleFromFolderName };
+module.exports = { Scanner, deriveAlbumTitleFromFolderName, collectArtistTracks, parseMp3Id3v1 };

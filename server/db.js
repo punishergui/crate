@@ -91,6 +91,20 @@ function initDb() {
       FOREIGN KEY(albumId) REFERENCES albums(id)
     );
 
+    CREATE TABLE IF NOT EXISTS file_index (
+      path TEXT PRIMARY KEY,
+      mtime INTEGER NOT NULL,
+      size INTEGER NOT NULL,
+      inodeKey TEXT,
+      fileHash TEXT,
+      ext TEXT NOT NULL,
+      albumTag TEXT,
+      albumArtistTag TEXT,
+      artistTag TEXT,
+      yearTag TEXT,
+      lastScanAt TEXT NOT NULL
+    );
+
 
     CREATE TABLE IF NOT EXISTS wanted_albums (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,6 +194,8 @@ function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_albums_artist_deleted ON albums(artistId, deleted);
     CREATE INDEX IF NOT EXISTS idx_expected_artists_artist_id ON expected_artists(artistId);
+    CREATE INDEX IF NOT EXISTS idx_file_index_inode ON file_index(inodeKey);
+    CREATE INDEX IF NOT EXISTS idx_file_index_hash ON file_index(fileHash);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_expected_artists_artist_unique ON expected_artists(artistId);
     CREATE INDEX IF NOT EXISTS idx_expected_albums_expected_artist_id ON expected_albums(expectedArtistId);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_expected_albums_release_group_unique ON expected_albums(expectedArtistId, mb_release_group_id);
