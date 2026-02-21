@@ -21,6 +21,8 @@ function createTestDb() {
       scannedFiles INTEGER NOT NULL DEFAULT 0,
       scannedAlbums INTEGER NOT NULL DEFAULT 0,
       scannedArtists INTEGER NOT NULL DEFAULT 0,
+      skippedFiles INTEGER NOT NULL DEFAULT 0,
+      skippedReasonsJson TEXT NOT NULL DEFAULT '{}',
       error TEXT
     );
     INSERT INTO scan_state(id) VALUES(1);
@@ -64,7 +66,15 @@ function createTestDb() {
       albumArtistTag TEXT,
       artistTag TEXT,
       yearTag TEXT,
-      lastScanAt TEXT NOT NULL
+      lastScanAt TEXT NOT NULL,
+      lastSeenAt TEXT
+    );
+    CREATE TABLE scan_skipped (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scanStartedAt TEXT NOT NULL,
+      filePath TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      createdAt TEXT NOT NULL
     );
   `);
   return db;
@@ -124,4 +134,28 @@ test('scanner imports nested artist/album mp3 using tags', async () => {
   assert.ok(album);
   assert.equal(album.title, 'Waiting');
   assert.equal(album.trackCount, 1);
+});
+
+
+test('scanner dedupes duplicate hardlinks and records skipped reason breakdown', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-scan-dupe-'));
+  const artistDir = path.join(tmp, 'New Found Glory');
+  const albumDir = path.join(artistDir, 'Waiting (1998)');
+  fs.mkdirSync(albumDir, { recursive: true });
+
+  const source = path.join(albumDir, '01-track.mp3');
+  writeMp3WithId3v1(source, { title: 'Track', artist: 'New Found Glory', album: 'Waiting', year: '1998' });
+  const dupe = path.join(artistDir, '01-track-hardlink.mp3');
+  fs.linkSync(source, dupe);
+
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  await scanner.runScan(tmp, { recursive: true, maxDepth: 4 });
+
+  const trackCount = db.prepare('SELECT COUNT(*) AS c FROM tracks WHERE deleted = 0').get().c;
+  assert.equal(trackCount, 1);
+
+  const status = scanner.getStatus();
+  assert.equal(status.skippedFiles, 1);
+  assert.equal(status.skippedReasonsBreakdown.duplicate, 1);
 });

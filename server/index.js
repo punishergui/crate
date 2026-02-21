@@ -204,7 +204,7 @@ function clearLibraryState() {
     db.prepare(`
       UPDATE scan_state
       SET status = 'idle', startedAt = NULL, finishedAt = NULL, currentPath = NULL,
-          scannedFiles = 0, scannedAlbums = 0, scannedArtists = 0, error = NULL
+          scannedFiles = 0, scannedAlbums = 0, scannedArtists = 0, skippedFiles = 0, skippedReasonsJson = '{}', error = NULL
       WHERE id = 1
     `).run();
   })();
@@ -279,7 +279,8 @@ app.post('/api/scan/start', async (req, reply) => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath, {
     recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
-    maxDepth: payload.maxDepth
+    maxDepth: payload.maxDepth,
+    artistId: Number.isInteger(payload.artistId) ? payload.artistId : null
   });
 });
 
@@ -292,11 +293,53 @@ app.post('/api/scan', async (req, reply) => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath, {
     recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
-    maxDepth: payload.maxDepth
+    maxDepth: payload.maxDepth,
+    artistId: Number.isInteger(payload.artistId) ? payload.artistId : null
   });
 });
 
 app.get('/api/scan/status', async () => scanner.getStatus());
+
+
+app.get('/api/scan/skipped', async (req, reply) => {
+  const limit = Number(req.query.limit ?? 200);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    return reply.code(400).send({ error: 'limit must be an integer between 1 and 1000' });
+  }
+  const startedAt = db.prepare('SELECT startedAt FROM scan_state WHERE id = 1').get()?.startedAt;
+  if (!startedAt) return [];
+  return db.prepare(`
+    SELECT id, filePath AS path, reason, createdAt
+    FROM scan_skipped
+    WHERE scanStartedAt = ?
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(startedAt, limit);
+});
+
+app.post('/api/artist/:id/scan/deep', async (req, reply) => {
+  const artistId = Number(req.params.id);
+  if (!Number.isInteger(artistId) || artistId < 1) {
+    return reply.code(400).send({ error: 'invalid artist id' });
+  }
+
+  const artist = db.prepare('SELECT id FROM artists WHERE id = ? AND deleted = 0').get(artistId);
+  if (!artist) {
+    return reply.code(404).send({ error: 'Artist not found' });
+  }
+
+  const payload = req.body || {};
+  if ('maxDepth' in payload && (!Number.isInteger(payload.maxDepth) || payload.maxDepth < 1 || payload.maxDepth > 20)) {
+    return reply.code(400).send({ error: 'maxDepth must be an integer between 1 and 20' });
+  }
+
+  const settings = getSettings();
+  return scanner.startScan(settings.libraryPath, {
+    recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
+    maxDepth: payload.maxDepth,
+    artistId
+  });
+});
 
 app.post('/api/scan/cancel', async () => ({ cancelled: scanner.requestCancel(), status: scanner.getStatus() }));
 
