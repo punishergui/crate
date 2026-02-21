@@ -367,12 +367,14 @@ class Scanner {
         SET artistId = ?, title = ?, lastSeen = ?, lastFileMtime = ?, formatsJson = ?, trackCount = ?, deleted = 0
         WHERE id = ?
       `).run(artistId, title, seenAt, lastFileMtime, formatsJson, trackCount, existing.id);
+      this.db.prepare(`INSERT INTO jobs (type, payloadJson, status, createdAt) VALUES (?, ?, 'queued', ?)`).run('art_fetch_album', JSON.stringify({ albumId: existing.id }), Date.now());
       return existing.id;
     }
     const res = this.db.prepare(`
       INSERT INTO albums(artistId, title, path, firstSeen, lastSeen, lastFileMtime, formatsJson, trackCount, deleted)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(artistId, title, albumPath, seenAt, seenAt, lastFileMtime, formatsJson, trackCount);
+    this.db.prepare(`INSERT INTO jobs (type, payloadJson, status, createdAt) VALUES (?, ?, 'queued', ?)`).run('art_fetch_album', JSON.stringify({ albumId: Number(res.lastInsertRowid) }), Date.now());
     return res.lastInsertRowid;
   }
 

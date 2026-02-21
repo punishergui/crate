@@ -1,0 +1,9 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="36" fill="#0E0E12"/>
+  <rect x="24" y="24" width="464" height="464" rx="28" stroke="#FF6A00" stroke-opacity="0.45" stroke-width="4"/>
+  <circle cx="256" cy="256" r="124" fill="#1B1B22" stroke="#FF6A00" stroke-width="8"/>
+  <circle cx="256" cy="256" r="26" fill="#FF6A00"/>
+  <path d="M92 390L188 306L250 346L346 250L420 306" stroke="#7B48FF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M100 118H412" stroke="#FF6A00" stroke-opacity="0.7" stroke-width="10" stroke-linecap="round"/>
+  <text x="256" y="462" text-anchor="middle" fill="#FF6A00" font-family="Arial, sans-serif" font-size="34" font-weight="700">CRATE</text>
+</svg>

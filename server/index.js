@@ -7,6 +7,7 @@ const { Scanner } = require('./scanner');
 const { normalizeTitle } = require('./normalize');
 const { createDiscographyService } = require('./discography');
 const { createLidarrClient } = require('./lidarr');
+const { ArtworkService } = require('./artwork');
 
 const APP_NAME = 'crate';
 const PORT = Number(process.env.PORT || 4000);
@@ -16,6 +17,7 @@ const app = Fastify({ logger: true });
 const db = initDb();
 const scanner = new Scanner(db);
 const discography = createDiscographyService(db);
+const artwork = new ArtworkService(db, app.log);
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const VERSION = process.env.GIT_SHA || pkg.version;
@@ -30,12 +32,14 @@ function normalizeSettings(row) {
     lidarrBaseUrl: row.lidarrBaseUrl || '',
     lidarrApiKey: row.lidarrApiKey || '',
     lidarrQualityProfileId: Number.isInteger(row.lidarrQualityProfileId) ? row.lidarrQualityProfileId : null,
-    lidarrRootFolderPath: row.lidarrRootFolderPath || ''
+    lidarrRootFolderPath: row.lidarrRootFolderPath || '',
+    artworkPreferLocal: Boolean(row.artworkPreferLocal),
+    artworkAllowRemote: Boolean(row.artworkAllowRemote)
   };
 }
 
 function getSettings() {
-  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath FROM settings WHERE id = 1').get();
+  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote FROM settings WHERE id = 1').get();
   return normalizeSettings(row);
 }
 
@@ -95,14 +99,27 @@ function validateSettings(payload) {
       out.lidarrRootFolderPath = payload.lidarrRootFolderPath.trim();
     }
   }
+  if ('artworkPreferLocal' in payload) {
+    if (typeof payload.artworkPreferLocal !== 'boolean') {
+      throw new Error('artworkPreferLocal must be boolean');
+    }
+    out.artworkPreferLocal = payload.artworkPreferLocal;
+  }
+  if ('artworkAllowRemote' in payload) {
+    if (typeof payload.artworkAllowRemote !== 'boolean') {
+      throw new Error('artworkAllowRemote must be boolean');
+    }
+    out.artworkAllowRemote = payload.artworkAllowRemote;
+  }
   return out;
 }
 
 function getArtistOverview(artistId) {
   const owned = db.prepare(`
-    SELECT id, title, path, lastFileMtime, formatsJson, trackCount
-    FROM albums
-    WHERE artistId = ? AND deleted = 0
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, aa.source AS artworkSource
+    FROM albums al
+    LEFT JOIN album_art aa ON aa.albumId = al.id
+    WHERE al.artistId = ? AND al.deleted = 0
     ORDER BY title
   `).all(artistId).map((row) => ({ ...row, formats: JSON.parse(row.formatsJson || '[]') }));
 
@@ -180,9 +197,10 @@ function getAllMissing(limit) {
 
 function getRecent(limit) {
   return db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName, ar.slug AS artistSlug
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.firstSeen, al.formatsJson, al.trackCount, ar.name AS artistName, ar.slug AS artistSlug, aa.source AS artworkSource
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
+    LEFT JOIN album_art aa ON aa.albumId = al.id
     WHERE al.deleted = 0
     ORDER BY COALESCE(al.lastFileMtime, strftime('%s', al.firstSeen) * 1000) DESC
     LIMIT ?
@@ -250,7 +268,9 @@ app.put('/api/settings', async (req, reply) => {
           lidarrBaseUrl = ?,
           lidarrApiKey = ?,
           lidarrQualityProfileId = ?,
-          lidarrRootFolderPath = ?
+          lidarrRootFolderPath = ?,
+          artworkPreferLocal = ?,
+          artworkAllowRemote = ?
       WHERE id = 1
     `).run(
       next.accentColor,
@@ -260,7 +280,9 @@ app.put('/api/settings', async (req, reply) => {
       next.lidarrBaseUrl,
       next.lidarrApiKey,
       next.lidarrQualityProfileId,
-      next.lidarrRootFolderPath || null
+      next.lidarrRootFolderPath || null,
+      next.artworkPreferLocal ? 1 : 0,
+      next.artworkAllowRemote ? 1 : 0
     );
     return getSettings();
   } catch (error) {
@@ -400,9 +422,10 @@ app.get('/api/library/albums', async (req, reply) => {
   const params = search ? { q: `%${search}%`, limit: pageSize, offset } : { limit: pageSize, offset };
 
   const items = db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug, aa.source AS artworkSource
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
+    LEFT JOIN album_art aa ON aa.albumId = al.id
     WHERE al.deleted = 0 ${where}
     ORDER BY al.lastFileMtime DESC, al.id DESC
     LIMIT @limit OFFSET @offset
@@ -435,9 +458,10 @@ app.put('/api/library/albums/:id/owned', async (req, reply) => {
   }
 
   const row = db.prepare(`
-    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.owned, ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug, aa.source AS artworkSource
     FROM albums al
     JOIN artists ar ON ar.id = al.artistId
+    LEFT JOIN album_art aa ON aa.albumId = al.id
     WHERE al.id = ?
   `).get(albumId);
   return { ...row, owned: Boolean(row.owned), formats: JSON.parse(row.formatsJson || '[]') };
@@ -779,6 +803,55 @@ app.post('/api/integrations/lidarr/search', async (req, reply) => {
   }
 });
 
+
+app.get('/api/artwork/album/:albumId', async (req, reply) => {
+  const albumId = Number(req.params.albumId);
+  const size = String(req.query.size || '512');
+  if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
+  if (!['256', '512', 'original'].includes(size)) return reply.code(400).send({ error: 'size must be 256|512|original' });
+
+  const paths = artwork.getPaths(albumId);
+  const filePath = size === 'original' ? paths.original : (size === '256' ? paths.thumb256 : paths.thumb512);
+  if (!fs.existsSync(filePath)) return reply.code(404).send({ error: 'Artwork not found' });
+  const header = Buffer.alloc(8);
+  const fd = fs.openSync(filePath, 'r');
+  fs.readSync(fd, header, 0, 8, 0);
+  fs.closeSync(fd);
+  const isPng = header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47;
+  reply.header('Cache-Control', 'public, max-age=86400, immutable');
+  reply.type(isPng ? 'image/png' : 'image/jpeg');
+  return reply.send(fs.createReadStream(filePath));
+});
+
+app.post('/api/artwork/album/:albumId/refresh', async (req, reply) => {
+  const albumId = Number(req.params.albumId);
+  if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
+  const exists = db.prepare('SELECT id FROM albums WHERE id = ? AND deleted = 0').get(albumId);
+  if (!exists) return reply.code(404).send({ error: 'Album not found' });
+  artwork.queue('art_fetch_album', { albumId, force: true });
+  return { queued: true };
+});
+
+app.post('/api/artwork/artist/:artistId/refresh', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
+  if (!Number.isInteger(artistId) || artistId < 1) return reply.code(400).send({ error: 'invalid artist id' });
+  const albums = db.prepare('SELECT id FROM albums WHERE artistId = ? AND deleted = 0').all(artistId);
+  for (const album of albums) {
+    artwork.queue('art_fetch_album', { albumId: album.id, force: true });
+  }
+  return { queued: albums.length };
+});
+
+app.post('/api/artwork/refresh-all', async () => {
+  const albums = db.prepare('SELECT id FROM albums WHERE deleted = 0').all();
+  for (const album of albums) {
+    artwork.queue('art_fetch_album', { albumId: album.id, force: true });
+  }
+  return { queued: albums.length };
+});
+
+app.get('/api/artwork/status', async () => artwork.getJobCounts());
+
 app.get('/api/dashboard', async () => {
   const stats = getStats();
   const recent = getRecent(12);
@@ -796,7 +869,8 @@ app.get('/api/dashboard', async () => {
 
   const wishlistCount = db.prepare('SELECT COUNT(*) AS c FROM wishlist_albums').get().c;
 
-  return { stats, recent, missingTotal, wishlistCount };
+  const missing = getAllMissing(8);
+  return { stats, recent, missingTotal, missing, wishlistCount };
 });
 
 app.register(fastifyStatic, {
