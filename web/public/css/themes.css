@@ -1,0 +1,40 @@
+html[data-theme='neon-djent'] {
+  --bg-0: #050608;
+  --bg-1: #0d1014;
+  --card: #151922;
+  --line: rgba(255, 255, 255, 0.14);
+  --text: #f4f6f8;
+  --text-dim: #9aa3ad;
+  --accent: #FF6A00;
+  --accent-glow: rgba(255, 106, 0, 0.35);
+}
+html[data-theme='ice'] {
+  --bg-0: #070b12;
+  --bg-1: #131c2a;
+  --card: #182334;
+  --line: rgba(167, 205, 255, 0.28);
+  --text: #e7f2ff;
+  --text-dim: #9ab4d3;
+  --accent: #63A4FF;
+  --accent-glow: rgba(99, 164, 255, 0.35);
+}
+html[data-theme='worship'] {
+  --bg-0: #0c0905;
+  --bg-1: #17120a;
+  --card: #21180f;
+  --line: rgba(255, 225, 160, 0.26);
+  --text: #fff3d7;
+  --text-dim: #c7b088;
+  --accent: #D9A441;
+  --accent-glow: rgba(217, 164, 65, 0.34);
+}
+html[data-theme='country'] {
+  --bg-0: #0d0906;
+  --bg-1: #1b120d;
+  --card: #23170f;
+  --line: rgba(201, 154, 98, 0.28);
+  --text: #f7e8d8;
+  --text-dim: #b79a7f;
+  --accent: #B8863B;
+  --accent-glow: rgba(184, 134, 59, 0.32);
+}

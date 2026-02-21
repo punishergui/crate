@@ -59,6 +59,8 @@ function createTestDb() {
       path TEXT PRIMARY KEY,
       mtime INTEGER NOT NULL,
       size INTEGER NOT NULL,
+      inode INTEGER,
+      device INTEGER,
       inodeKey TEXT,
       fileHash TEXT,
       ext TEXT NOT NULL,

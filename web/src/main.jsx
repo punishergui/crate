@@ -19,7 +19,14 @@ const api = {
   post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 };
 
-function AppCard({ title, actions, children, className = '' }) {
+const THEMES = [
+  { id: 'neon-djent', name: 'Neon Djent', description: 'Industrial black with LED orange accents.' },
+  { id: 'ice', name: 'Ice', description: 'Cold steel blue contrast for night sessions.' },
+  { id: 'worship', name: 'Worship', description: 'Warm gold highlights with soft dark surfaces.' },
+  { id: 'country', name: 'Country', description: 'Dark wood and brass-inspired tones.' }
+];
+
+function AppCard({ title, actions, children, className = 'card-solid' }) {
   return <section className={`app-card ${className}`}>
     <header className="card-top"><h2>{title}</h2><div>{actions}</div></header>
     <div>{children}</div>
@@ -28,32 +35,11 @@ function AppCard({ title, actions, children, className = '' }) {
 
 function TopBar({ scanStatus, onScan }) {
   return <header className="top-bar">
-    <button onClick={onScan}>Scan</button>
-    <input className="search" placeholder="Search artists, albums, tracks" />
-    <div className="status-pill">{scanStatus?.status || 'idle'} · {scanStatus?.currentPath ? 'scanning' : 'ready'}</div>
-    <button title="Notifications">🔔</button>
-    <Link to="/settings">⚙️</Link>
+    <div className="status-pill"><span className={`status-dot ${scanStatus?.status === 'running' ? 'live' : ''}`} />{scanStatus?.status || 'idle'}</div>
+    <input className="search" placeholder="SEARCH ARTISTS, ALBUMS, TRACKS" />
+    <button className="scan-led" onClick={onScan}>SCAN</button>
+    <Link to="/settings" className="icon-link">⚙</Link>
   </header>;
-}
-
-function Dashboard() {
-  const [data, setData] = React.useState();
-  React.useEffect(() => { api.get('/api/dashboard').then(setData).catch(() => setData(null)); }, []);
-
-  return <div className="dashboard-grid">
-    <div className="col-left">
-      <AppCard title="Concerts Near You"><ul><li>Connect your event provider to populate shows.</li></ul></AppCard>
-      <AppCard title="Recent Activity"><ul>{(data?.recent || []).slice(0, 8).map((a) => <li key={a.id}>{a.artistName} — {a.title}</li>)}</ul></AppCard>
-    </div>
-    <div className="col-right">
-      <AppCard title="New Releases" className="feature-card"><div className="album-grid">{(data?.recent || []).slice(0, 8).map((a) => <AlbumTile key={a.id} album={a} />)}</div></AppCard>
-      <div className="mini-grid">
-        <AppCard title="Library Overview"><p>{data?.stats?.artists ?? '-'} artists · {data?.stats?.albums ?? '-'} albums · {data?.stats?.tracks ?? '-'} tracks</p></AppCard>
-        <AppCard title="Missing Albums"><p>{data?.missingTotal ?? 0}</p></AppCard>
-        <AppCard title="Downloads"><p>No active downloads</p></AppCard>
-      </div>
-    </div>
-  </div>;
 }
 
 function AlbumTile({ album, onToggleOwned }) {
@@ -63,9 +49,29 @@ function AlbumTile({ album, onToggleOwned }) {
     <div className="tile-hover">
       <button>Play</button>
       <Link to={`/artist/${album.artistSlug || album.artistId}`}>Open</Link>
-      {onToggleOwned ? <button onClick={() => onToggleOwned(album.id, !album.owned)}>{album.owned ? 'Mark Missing' : 'Mark Owned'}</button> : null}
+      {onToggleOwned ? <button onClick={() => onToggleOwned(album.id, !album.owned)}>{album.owned ? 'Missing' : 'Owned'}</button> : null}
     </div>
   </article>;
+}
+
+function Dashboard() {
+  const [data, setData] = React.useState();
+  React.useEffect(() => { api.get('/api/dashboard').then(setData).catch(() => setData(null)); }, []);
+
+  return <div className="dashboard-grid">
+    <div className="col-left">
+      <AppCard title="Concerts" className="panel-metal"><ul><li>Connect event provider to populate shows.</li></ul></AppCard>
+      <AppCard title="Recent Activity" className="card-soft"><ul>{(data?.recent || []).slice(0, 8).map((a) => <li key={a.id}>{a.artistName} — {a.title}</li>)}</ul></AppCard>
+    </div>
+    <div className="col-right">
+      <AppCard title="New Releases" className="card-solid"><div className="album-grid">{(data?.recent || []).slice(0, 8).map((a) => <AlbumTile key={a.id} album={a} />)}</div></AppCard>
+      <div className="mini-grid">
+        <AppCard title="Library Overview" className="card-soft"><p>{data?.stats?.artists ?? '-'} artists · {data?.stats?.albums ?? '-'} albums · {data?.stats?.tracks ?? '-'} tracks</p></AppCard>
+        <AppCard title="Missing Albums" className="card-soft"><p>{data?.missingTotal ?? 0}</p></AppCard>
+        <AppCard title="Downloads" className="card-soft"><p>No active downloads</p></AppCard>
+      </div>
+    </div>
+  </div>;
 }
 
 function Collection() {
@@ -78,19 +84,15 @@ function Collection() {
   }, [ownedFilter, q]);
   React.useEffect(() => { load(); }, [load]);
 
-  const toggleOwned = async (id, owned) => {
-    await api.put(`/api/library/albums/${id}/owned`, { owned });
-    load();
-  };
+  const toggleOwned = async (id, owned) => { await api.put(`/api/library/albums/${id}/owned`, { owned }); load(); };
 
   return <section>
     <h1>Collection</h1>
-    <div className="filters">
+    <div className="filters inline-filters">
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artist or album" />
-      <select><option>Artist</option></select><select><option>Format</option></select><select><option>Year</option></select>
       <button onClick={() => setOwnedFilter('1')}>Owned</button><button onClick={() => setOwnedFilter('0')}>Missing</button><button onClick={() => setOwnedFilter('all')}>All</button>
     </div>
-    <div className="album-grid">{list.items.map((a) => <AlbumTile key={a.id} album={a} onToggleOwned={toggleOwned} />)}</div>
+    <div className="album-grid collection-grid">{list.items.map((a) => <AlbumTile key={a.id} album={a} onToggleOwned={toggleOwned} />)}</div>
   </section>;
 }
 
@@ -118,27 +120,36 @@ function ArtistPage() {
 
   const deepRescan = async () => {
     if (!data?.artist?.id) return;
-    const response = await api.post(`/api/artist/${data.artist.id}/scan/deep`, { recursive: true, maxDepth: 6 });
-    setStatus(response.started ? 'Deep rescan started.' : 'Scan already running.');
+    const response = await api.post(`/api/scan/artist/${data.artist.id}/deep`, { recursive: true, maxDepth: 6 });
+    setStatus(response.started ? 'Deep scan started.' : 'Scan already running.');
   };
 
   if (!data) return <section>{status || 'Loading...'}</section>;
   return <section>
-    <div className="artist-hero"><h1>{data.artist.name}</h1><p>Owned {summary?.ownedCount ?? data.owned.length} · Missing {summary?.missingCount ?? 0}</p><button onClick={deepRescan}>Deep Rescan</button></div>
-    {status ? <p>{status}</p> : null}
-    <AppCard title="Albums"><div className="album-grid">{data.owned.map((a) => <AlbumTile key={a.id} album={{ ...a, artistName: data.artist.name, artistSlug: data.artist.slug }} />)}</div></AppCard>
-    <div className="mini-grid">
-      <AppCard title="Missing Albums"><ul>{(summary?.missingAlbums || []).slice(0, 20).map((a) => <li key={a.id}>{a.title}</li>)}</ul></AppCard>
-      <AppCard title="Upcoming Shows"><p>No shows connected yet.</p></AppCard>
+    <div className="artist-hero panel-metal">
+      <h1>{data.artist.name}</h1><p>Owned {summary?.ownedCount ?? data.owned.length} · Missing {summary?.missingCount ?? 0}</p>
+      <button className="scan-led" onClick={deepRescan}>DEEP SCAN</button>
     </div>
+    {status ? <p>{status}</p> : null}
+    <AppCard title="Albums"><div className="album-grid collection-grid">{data.owned.map((a) => <AlbumTile key={a.id} album={{ ...a, artistName: data.artist.name, artistSlug: data.artist.slug }} />)}</div></AppCard>
   </section>;
 }
 
+function ThemesTab({ activeTheme, onThemeChange }) {
+  return <div className="themes-grid">{THEMES.map((theme) => <button key={theme.id} className={`theme-card ${activeTheme === theme.id ? 'active' : ''}`} onClick={() => onThemeChange(theme.id)}>
+    <div className="swatch" data-theme-preview={theme.id} />
+    <strong>{theme.name}</strong>
+    <p>{theme.description}</p>
+  </button>)}</div>;
+}
+
 function ScanSettings({ settings, setSettings }) {
+  const [tab, setTab] = React.useState('general');
   const [scan, setScan] = React.useState();
   const [skipped, setSkipped] = React.useState([]);
   const [maxDepth, setMaxDepth] = React.useState(4);
   const [deep, setDeep] = React.useState(true);
+  const [activeTheme, setActiveTheme] = React.useState(window.CRATE_THEME?.get?.() || 'neon-djent');
 
   React.useEffect(() => {
     const tick = async () => {
@@ -152,24 +163,36 @@ function ScanSettings({ settings, setSettings }) {
 
   const startScan = () => api.post('/api/scan/start', { recursive: deep, maxDepth }).then((v) => setScan(v.status));
   const save = async () => setSettings(await api.put('/api/settings', settings));
+  const applyTheme = (themeId) => { window.CRATE_THEME?.apply?.(themeId); setActiveTheme(themeId); };
 
   return <section>
-    <h1>Library Settings</h1>
-    <div className="mini-grid">
-      <AppCard title="Scanner">
-        <label><input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} /> Deep Scan</label>
-        <label>Max depth <input type="number" min="1" max="20" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
-        <button onClick={startScan}>Normal Scan</button>
-        <button onClick={() => api.post('/api/scan/cancel').then((v) => setScan(v.status))}>Cancel</button>
-      </AppCard>
-      <AppCard title="Appearance">
-        <label>Accent <input value={settings?.accentColor || ''} onChange={(e) => setSettings({ ...settings, accentColor: e.target.value })} /></label>
-        <label><input type="checkbox" checked={Boolean(settings?.noiseOverlay)} onChange={(e) => setSettings({ ...settings, noiseOverlay: e.target.checked })} /> Grain overlay</label>
-        <button onClick={save}>Save</button>
-      </AppCard>
-    </div>
-    <AppCard title="Live Scan Progress"><pre>{JSON.stringify(scan, null, 2)}</pre></AppCard>
-    <AppCard title="Skipped Files"><ul>{skipped.map((s) => <li key={s.id}>{s.reason}: {s.path}</li>)}</ul></AppCard>
+    <h1>Settings</h1>
+    <nav className="settings-tabs">
+      {['general', 'library', 'scanner', 'themes', 'about'].map((t) => <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{t.toUpperCase()}</button>)}
+    </nav>
+
+    {tab === 'general' ? <AppCard title="General" className="card-soft"><p>General app preferences.</p></AppCard> : null}
+    {tab === 'library' ? <AppCard title="Library" className="card-soft"><p>Path: {settings?.libraryPath || '-'}</p></AppCard> : null}
+    {tab === 'about' ? <AppCard title="About" className="card-soft"><p>CRATE PWA</p></AppCard> : null}
+
+    {tab === 'scanner' ? <>
+      <div className="mini-grid">
+        <AppCard title="Scanner" className="panel-metal">
+          <label><input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} /> Deep Scan</label>
+          <label>Max depth <input type="number" min="1" max="20" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
+          <button className="scan-led" onClick={startScan}>Normal Scan</button>
+          <button onClick={() => api.post('/api/scan/cancel').then((v) => setScan(v.status))}>Cancel</button>
+        </AppCard>
+        <AppCard title="Appearance" className="card-soft">
+          <label>Accent <input value={settings?.accentColor || ''} onChange={(e) => setSettings({ ...settings, accentColor: e.target.value })} /></label>
+          <button onClick={save}>Save</button>
+        </AppCard>
+      </div>
+      <AppCard title="Live Progress" className="card-solid"><pre>{JSON.stringify(scan, null, 2)}</pre></AppCard>
+      <AppCard title="Skipped Files" className="card-soft"><ul>{skipped.map((s) => <li key={s.id}>{s.reason}: {s.path}</li>)}</ul></AppCard>
+    </> : null}
+
+    {tab === 'themes' ? <AppCard title="Themes" className="card-solid"><ThemesTab activeTheme={activeTheme} onThemeChange={applyTheme} /></AppCard> : null}
   </section>;
 }
 
@@ -188,15 +211,15 @@ function App() {
 
   const startQuickScan = () => api.post('/api/scan/start', { recursive: true, maxDepth: 3 }).then((v) => setScanStatus(v.status));
 
-  return <div className={settings?.noiseOverlay ? 'app-shell noise' : 'app-shell'} style={{ '--accent': settings?.accentColor || '#FF6A00' }}>
+  return <div className="app-shell">
     <aside className="sidebar">
-      <NavLink to="/">Dashboard</NavLink>
-      <NavLink to="/collection">Collection</NavLink>
-      <NavLink to="/discover">Discover</NavLink>
-      <NavLink to="/releases">Releases</NavLink>
-      <NavLink to="/concerts">Concerts</NavLink>
-      <NavLink to="/wishlist">Wishlist</NavLink>
-      <NavLink to="/settings">Settings</NavLink>
+      <NavLink to="/">DASHBOARD</NavLink>
+      <NavLink to="/collection">COLLECTION</NavLink>
+      <NavLink to="/discover">DISCOVER</NavLink>
+      <NavLink to="/releases">RELEASES</NavLink>
+      <NavLink to="/concerts">CONCERTS</NavLink>
+      <NavLink to="/wishlist">WISHLIST</NavLink>
+      <NavLink to="/settings">SETTINGS</NavLink>
     </aside>
     <main className="content">
       <TopBar scanStatus={scanStatus} onScan={startQuickScan} />
