@@ -3,7 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { slugifyArtistName, shortHash } = require('./slug');
 
-const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.aiff', '.alac']);
+const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.wav']);
 
 function nowIso() {
   return new Date().toISOString();
@@ -15,6 +15,45 @@ function isHiddenName(name) {
 
 function isAudioFileName(name) {
   return AUDIO_EXTS.has(path.extname(name).toLowerCase());
+}
+
+function normalizeTagValue(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath) {
+  if (depth > maxDepth) return results;
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    onSkip?.(dir, `unreadable-directory: ${error.message}`);
+    return results;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    onVisitPath?.(fullPath);
+
+    if (entry.isDirectory()) {
+      if (entry.name === '.crate' || isHiddenName(entry.name)) {
+        onSkip?.(fullPath, 'hidden-path');
+        continue;
+      }
+      if (depth + 1 > maxDepth) {
+        onSkip?.(fullPath, `depth-exceeded:${maxDepth}`);
+        continue;
+      }
+      walkDir(fullPath, maxDepth, depth + 1, results, onSkip, onVisitPath);
+      continue;
+    }
+
+    results.push(fullPath);
+  }
+
+  return results;
 }
 
 function normalizeCompareValue(value) {
@@ -222,82 +261,55 @@ function hashFileFirstChunk(filePath) {
   }
 }
 
-function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onSkip) {
+function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onSkip, onVisitPath) {
+  const walkMaxDepth = recursive ? maxDepth : 0;
+  const allPaths = walkDir(artistPath, walkMaxDepth, 0, [], onSkip, onVisitPath);
   const out = [];
-  const stack = [{ currentPath: artistPath, depth: 0 }];
 
-  while (stack.length > 0) {
-    const { currentPath, depth } = stack.pop();
-    let entries = [];
+  for (const fullPath of allPaths) {
+    let lst;
     try {
-      entries = fs.readdirSync(currentPath, { withFileTypes: true });
+      lst = fs.lstatSync(fullPath);
     } catch (error) {
-      onSkip?.(currentPath, `unreadable-directory: ${error.message}`);
+      onSkip?.(fullPath, `unreadable-path: ${error.message}`);
       continue;
     }
 
-    for (const entry of entries) {
-      const fullPath = path.join(currentPath, entry.name);
-      if (isHiddenName(entry.name)) {
-        onSkip?.(fullPath, 'hidden-path');
-        continue;
-      }
-
-      let lst;
+    const isSymlink = lst.isSymbolicLink();
+    let stat = lst;
+    if (isSymlink) {
       try {
-        lst = fs.lstatSync(fullPath);
+        stat = fs.statSync(fullPath);
       } catch (error) {
-        onSkip?.(fullPath, `unreadable-path: ${error.message}`);
+        onSkip?.(fullPath, `broken-symlink: ${error.message}`);
         continue;
       }
-
-      const isSymlink = lst.isSymbolicLink();
-      let stat = lst;
-      if (isSymlink) {
-        try {
-          stat = fs.statSync(fullPath);
-        } catch (error) {
-          onSkip?.(fullPath, `broken-symlink: ${error.message}`);
-          continue;
-        }
-      }
-
-      const isDir = stat.isDirectory();
-      const isFile = stat.isFile();
-      if (isDir) {
-        if (!recursive && depth >= 0) continue;
-        if (depth + 1 > maxDepth) {
-          onSkip?.(fullPath, `depth-exceeded:${maxDepth}`);
-          continue;
-        }
-        stack.push({ currentPath: fullPath, depth: depth + 1 });
-        continue;
-      }
-
-      if (!isFile) {
-        onSkip?.(fullPath, 'unsupported-file-type');
-        continue;
-      }
-
-      if (!isAudioFileName(entry.name)) {
-        onSkip?.(fullPath, `unsupported-extension:${path.extname(entry.name).toLowerCase() || 'none'}`);
-        continue;
-      }
-
-      out.push({
-        path: fullPath,
-        ext: path.extname(entry.name).toLowerCase().slice(1),
-        mtime: stat.mtimeMs,
-        size: stat.size,
-        inode: Number.isInteger(stat.ino) ? stat.ino : null,
-        device: Number.isInteger(stat.dev) ? stat.dev : null,
-        inodeKey: getStatInodeKey(stat)
-      });
     }
+
+    if (!stat.isFile()) {
+      onSkip?.(fullPath, 'unsupported-file-type');
+      continue;
+    }
+
+    if (!isAudioFileName(fullPath)) {
+      onSkip?.(fullPath, `unsupported-extension:${path.extname(fullPath).toLowerCase() || 'none'}`);
+      continue;
+    }
+
+    out.push({
+      path: fullPath,
+      ext: path.extname(fullPath).toLowerCase().slice(1),
+      mtime: stat.mtimeMs,
+      size: stat.size,
+      inode: Number.isInteger(stat.ino) ? stat.ino : null,
+      device: Number.isInteger(stat.dev) ? stat.dev : null,
+      inodeKey: getStatInodeKey(stat)
+    });
   }
 
   return out;
 }
+
 
 class Scanner {
   constructor(db) {
@@ -494,8 +506,7 @@ class Scanner {
     const value = String(reason || 'unknown').toLowerCase();
     if (value.startsWith('unsupported-extension')) return 'unsupported extension';
     if (value.startsWith('unreadable') || value.startsWith('unreadable-directory') || value.startsWith('unreadable-path')) return 'unreadable';
-    if (value.startsWith('missing-album-tag')) return 'missing album tag';
-    if (value.startsWith('missing-artist-tag')) return 'missing artist tag';
+    if (value.startsWith('missing-tags')) return 'missing tags';
     if (value.startsWith('deduped')) return 'duplicate';
     if (value.startsWith('parse-error')) return 'parse error';
     return reason || 'other';
@@ -583,11 +594,18 @@ class Scanner {
         artistsSeen.add(artistId);
 
         const skipped = [];
-        const artistTracks = collectArtistTracks(artistPath, { recursive: scanOptions.recursive !== false, maxDepth: scanOptions.maxDepth || 3 }, (filePath, reason) => {
-          this.pushSkip(skipped, filePath, reason);
-        });
+        const artistTracks = collectArtistTracks(
+          artistPath,
+          { recursive: scanOptions.recursive !== false, maxDepth: scanOptions.maxDepth || 3 },
+          (filePath, reason) => {
+            this.pushSkip(skipped, filePath, reason);
+          },
+          (currentPath) => {
+            this.updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists: artistsSeen.size, skippedFiles, skippedReasons, currentPath });
+          }
+        );
 
-        const tracksByAlbum = new Map();
+        const albumGroups = new Map();
         for (const track of artistTracks) {
           if (this.cancelRequested) break;
 
@@ -599,20 +617,17 @@ class Scanner {
             continue;
           }
 
-          if (!metadata.tagInfo?.album) {
-            this.pushSkip(skipped, track.path, 'missing-album-tag');
+          const albumName = normalizeTagValue(metadata.tagInfo?.album);
+          const albumArtist = normalizeTagValue(metadata.tagInfo?.albumArtist || metadata.tagInfo?.artist);
+          if (!albumName || !albumArtist) {
+            this.pushSkip(skipped, track.path, 'missing_tags');
             continue;
           }
 
-          if (!metadata.tagInfo?.albumArtist && !metadata.tagInfo?.artist) {
-            this.pushSkip(skipped, track.path, 'missing-artist-tag');
-            continue;
-          }
-
-          const normalizedTaggedArtist = normalizeCompareValue(metadata.albumArtistName);
+          const normalizedTaggedArtist = normalizeCompareValue(albumArtist);
           const normalizedArtist = normalizeCompareValue(artistName);
           if (normalizedArtist && normalizedTaggedArtist && normalizedArtist !== normalizedTaggedArtist) {
-            this.pushSkip(skipped, track.path, `missing-artist-tag:mismatch:${metadata.albumArtistName}`);
+            this.pushSkip(skipped, track.path, `missing-tags:mismatch:${albumArtist}`);
             continue;
           }
 
@@ -623,20 +638,20 @@ class Scanner {
           }
           seenDedupKeys.add(dedupeKey);
 
-          const albumGroupKey = buildAlbumGroupKey(metadata.albumTitle, metadata.albumArtistName);
-          if (!tracksByAlbum.has(albumGroupKey)) {
-            tracksByAlbum.set(albumGroupKey, {
-              title: metadata.albumTitle,
-              albumPath: createVirtualAlbumPath(artistPath, `${metadata.albumArtistName}-${metadata.albumTitle}`),
+          const groupKey = `${albumArtist}::${albumName}`;
+          if (!albumGroups.has(groupKey)) {
+            albumGroups.set(groupKey, {
+              title: albumName,
+              albumPath: createVirtualAlbumPath(artistPath, `${albumArtist}-${albumName}`),
               tracks: []
             });
           }
-          tracksByAlbum.get(albumGroupKey).tracks.push(track);
+          albumGroups.get(groupKey).tracks.push(track);
         }
 
         if (this.cancelRequested) break;
 
-        for (const albumCandidate of tracksByAlbum.values()) {
+        for (const albumCandidate of albumGroups.values()) {
           this.updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists: artistsSeen.size, skippedFiles, skippedReasons, currentPath: albumCandidate.albumPath });
           const trackCount = this.syncAlbum({ artistId, title: albumCandidate.title, albumPath: albumCandidate.albumPath, tracks: albumCandidate.tracks, seenAt });
           if (!trackCount) continue;
@@ -670,6 +685,8 @@ class Scanner {
           WHERE id = 1
         `).run(this.cancelRequested ? 'cancelled' : 'idle', finishedAt, scannedFiles, scannedAlbums, artistsSeen.size, skippedFiles, JSON.stringify(skippedReasons));
       })();
+
+      console.log(`[scanner] scan summary files=${scannedFiles} albums=${scannedAlbums} skipped=${skippedFiles} reasons=${JSON.stringify(skippedReasons)}`);
     } catch (error) {
       this.db.prepare(`
         UPDATE scan_state

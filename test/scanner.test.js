@@ -171,3 +171,34 @@ test('scanner dedupes duplicate hardlinks and records skipped reason breakdown',
   assert.equal(status.skippedFiles, 1);
   assert.equal(status.skippedReasonsBreakdown.duplicate, 1);
 });
+
+test('scanner groups same tagged album across different folders into one album', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-scan-merge-'));
+  const artistDir = path.join(tmp, 'New Found Glory');
+  const albumDirA = path.join(artistDir, 'Waiting (1998)');
+  const albumDirB = path.join(artistDir, 'Disc 2');
+  fs.mkdirSync(albumDirA, { recursive: true });
+  fs.mkdirSync(albumDirB, { recursive: true });
+
+  writeMp3WithId3v1(path.join(albumDirA, '01-track.mp3'), {
+    title: 'Track 1',
+    artist: 'New Found Glory',
+    album: 'Waiting',
+    year: '1998'
+  });
+  writeMp3WithId3v1(path.join(albumDirB, '02-track.mp3'), {
+    title: 'Track 2',
+    artist: 'New Found Glory',
+    album: 'Waiting',
+    year: '1998'
+  });
+
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  await scanner.runScan(tmp, { recursive: true, maxDepth: 4 });
+
+  const albums = db.prepare('SELECT title, trackCount FROM albums WHERE deleted = 0').all();
+  assert.equal(albums.length, 1);
+  assert.equal(albums[0].title, 'Waiting');
+  assert.equal(albums[0].trackCount, 2);
+});
