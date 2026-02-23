@@ -1,0 +1,26 @@
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.widget-slot { min-width: 0; }
+.widget-slot.span-3 { grid-column: span 3; }
+.widget-slot.span-6 { grid-column: span 6; }
+.widget-slot.span-12 { grid-column: span 12; }
+
+.inline-actions { display: flex; gap: 0.5rem; }
+.edit-controls { display: flex; align-items: center; gap: 0.4rem; }
+.dashboard-grid.editing .app-card { border-style: dashed; }
+.widget-list { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.35rem; }
+.skeleton-stack { display: grid; gap: 0.4rem; }
+.skeleton-row { height: 11px; border-radius: 999px; background: color-mix(in srgb, var(--mutedText) 35%, transparent); }
+.hidden-card { background: color-mix(in srgb, var(--surface) 70%, var(--background)); }
+
+@media (max-width: 1100px) {
+  .widget-slot.span-3 { grid-column: span 6; }
+}
+@media (max-width: 780px) {
+  .widget-slot.span-3,
+  .widget-slot.span-6,
+  .widget-slot.span-12 { grid-column: span 12; }
+}
