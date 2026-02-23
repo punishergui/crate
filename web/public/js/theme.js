@@ -2,7 +2,7 @@
   const storageKey = 'crate.theme';
   function apply(themeId) {
     const next = themeId || 'neon-djent';
-    document.documentElement.setAttribute('data-theme', next);
+    document.documentElement.dataset.theme = next;
     localStorage.setItem(storageKey, next);
     return next;
   }
@@ -13,7 +13,7 @@
     },
     apply,
     get() {
-      return document.documentElement.getAttribute('data-theme') || localStorage.getItem(storageKey) || 'neon-djent';
+      return document.documentElement.dataset.theme || localStorage.getItem(storageKey) || 'neon-djent';
     }
   };
 })();

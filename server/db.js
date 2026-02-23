@@ -115,6 +115,8 @@ function initDb() {
       scanStartedAt TEXT NOT NULL,
       filePath TEXT NOT NULL,
       reason TEXT NOT NULL,
+      ext TEXT,
+      message TEXT,
       createdAt TEXT NOT NULL
     );
 
@@ -301,6 +303,18 @@ function initDb() {
   if (!scanStateColumns.some((column) => column.name === 'skippedReasonsJson')) {
     db.exec("ALTER TABLE scan_state ADD COLUMN skippedReasonsJson TEXT NOT NULL DEFAULT '{}'");
   }
+
+
+  const scanSkippedColumns = db.prepare('PRAGMA table_info(scan_skipped)').all();
+  if (!scanSkippedColumns.some((column) => column.name === 'ext')) {
+    db.exec('ALTER TABLE scan_skipped ADD COLUMN ext TEXT');
+  }
+  if (!scanSkippedColumns.some((column) => column.name === 'message')) {
+    db.exec('ALTER TABLE scan_skipped ADD COLUMN message TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_scan_skipped_reason_created ON scan_skipped(reason, createdAt DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_scan_skipped_ext ON scan_skipped(ext)');
+
 
   const fileIndexColumns = db.prepare('PRAGMA table_info(file_index)').all();
   if (!fileIndexColumns.some((column) => column.name === 'lastSeenAt')) {

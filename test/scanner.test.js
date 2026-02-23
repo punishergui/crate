@@ -76,6 +76,8 @@ function createTestDb() {
       scanStartedAt TEXT NOT NULL,
       filePath TEXT NOT NULL,
       reason TEXT NOT NULL,
+      ext TEXT,
+      message TEXT,
       createdAt TEXT NOT NULL
     );
     CREATE TABLE jobs (
@@ -169,7 +171,7 @@ test('scanner dedupes duplicate hardlinks and records skipped reason breakdown',
 
   const status = scanner.getStatus();
   assert.equal(status.skippedFiles, 1);
-  assert.equal(status.skippedReasonsBreakdown.duplicate, 1);
+  assert.equal(status.skippedReasonsBreakdown.other, 1);
 });
 
 test('scanner groups same tagged album across different folders into one album', async () => {
@@ -201,4 +203,13 @@ test('scanner groups same tagged album across different folders into one album',
   assert.equal(albums.length, 1);
   assert.equal(albums[0].title, 'Waiting');
   assert.equal(albums[0].trackCount, 2);
+});
+
+
+test('normalizeSkipReason canonicalizes legacy missing tags variants', () => {
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  assert.equal(scanner.normalizeSkipReason('missing tags'), 'missing_tags');
+  assert.equal(scanner.normalizeSkipReason('missing-tags:mismatch:foo'), 'missing_tags');
+  assert.equal(scanner.normalizeSkipReason('unsupported-extension:.jpg'), 'unsupported_extension');
 });

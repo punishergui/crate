@@ -1,11 +1,13 @@
 :root {
-  --bg-0: #050608;
-  --bg-1: #0d1014;
-  --card: #151922;
-  --line: rgba(255, 255, 255, 0.14);
-  --text: #f4f6f8;
-  --text-dim: #9aa3ad;
-  --accent: #FF6A00;
-  --accent-glow: rgba(255, 106, 0, 0.35);
+  --bg-0: #0b0f12;
+  --bg-1: #151b20;
+  --card: #1b2329;
+  --line: rgba(122, 247, 255, 0.2);
+  --text: #ecf8ff;
+  --text-dim: #8da3b5;
+  --accent: #28e6f0;
+  --accent-secondary: #9d6bff;
+  --accent-glow: rgba(40, 230, 240, 0.35);
+  --glow: 0 0 0 1px var(--accent), 0 0 22px var(--accent-glow);
   --radius: 10px;
 }

@@ -26,10 +26,8 @@ function artworkUrl(albumId, size = 512) {
 }
 
 const THEMES = [
-  { id: 'neon-djent', name: 'Neon Djent', description: 'Industrial black with LED orange accents.' },
-  { id: 'ice', name: 'Ice', description: 'Cold steel blue contrast for night sessions.' },
-  { id: 'worship', name: 'Worship', description: 'Warm gold highlights with soft dark surfaces.' },
-  { id: 'country', name: 'Country', description: 'Dark wood and brass-inspired tones.' }
+  { id: 'neon-djent', name: 'Neon Djent', description: 'Dark charcoal with neon cyan + purple glow accents.' },
+  { id: 'classic-dark', name: 'Classic Dark', description: 'Simple neutral dark fallback theme.' }
 ];
 
 function AppCard({ title, actions, children, className = 'card-solid' }) {
@@ -175,6 +173,63 @@ function LibraryArtworkSettings({ settings, setSettings, save }) {
   </AppCard>;
 }
 
+
+function ScanPage() {
+  const [scan, setScan] = React.useState(null);
+  const [extensions, setExtensions] = React.useState([]);
+  const [selectedReason, setSelectedReason] = React.useState('');
+  const [samples, setSamples] = React.useState([]);
+
+  React.useEffect(() => {
+    const tick = async () => {
+      const status = await api.get('/api/scan/status').catch(() => null);
+      setScan(status);
+      const extPayload = await api.get('/api/scan/skipped/extensions?limit=20').catch(() => ({ items: [] }));
+      setExtensions(extPayload.items || []);
+    };
+    tick();
+    const id = setInterval(tick, 2500);
+    return () => clearInterval(id);
+  }, []);
+
+  React.useEffect(() => {
+    if (!selectedReason) return;
+    api.get(`/api/scan/skipped?reason=${encodeURIComponent(selectedReason)}&limit=100`)
+      .then((payload) => setSamples(payload.items || []))
+      .catch(() => setSamples([]));
+  }, [selectedReason]);
+
+  const reasons = Object.entries(scan?.skippedReasonsBreakdown || {});
+
+  return <section>
+    <h1>Scan</h1>
+    <div className="mini-grid">
+      <AppCard title="Last Scan" className="card-soft"><p>{scan?.finishedAt || scan?.startedAt || 'Never'}</p></AppCard>
+      <AppCard title="Scanned" className="card-soft"><p>{scan?.scannedFiles ?? 0} files · {scan?.scannedAlbums ?? 0} albums</p></AppCard>
+      <AppCard title="Skipped" className="card-soft"><p>{scan?.skippedFiles ?? 0} files</p></AppCard>
+    </div>
+
+    <AppCard title="Skipped Reasons" className="card-solid">
+      <table className="scan-table"><thead><tr><th>Reason</th><th>Count</th></tr></thead><tbody>
+        {reasons.map(([reason, count]) => <tr key={reason}><td><button className="link-button" onClick={() => setSelectedReason(reason)}>{reason}</button></td><td>{count}</td></tr>)}
+      </tbody></table>
+      {(scan?.skippedReasonsBreakdown?.missing_tags || 0) > 0 ? <p className="hint">These files are missing required metadata tags (Artist/Album/Title/Track).</p> : null}
+      {(scan?.skippedReasonsBreakdown?.unsupported_extension || 0) > 0 ? <p className="hint">These files are not audio formats Crate imports. Common examples: .jpg, .nfo, .cue…</p> : null}
+    </AppCard>
+
+    <AppCard title="Top Unsupported Extensions" className="card-soft">
+      <ul>{extensions.map((item) => <li key={item.ext}>{item.ext || '(none)'} — {item.count}</li>)}</ul>
+    </AppCard>
+
+    {selectedReason ? <div className="modal-backdrop" onClick={() => setSelectedReason('')}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="card-top"><h2>Skipped Samples: {selectedReason}</h2><button onClick={() => setSelectedReason('')}>Close</button></div>
+        <ul className="sample-list">{samples.map((s, idx) => <li key={`${s.path}-${idx}`}><code>{s.path}</code>{s.message ? <span> — {s.message}</span> : null}</li>)}</ul>
+      </div>
+    </div> : null}
+  </section>;
+}
+
 function ScanSettings({ settings, setSettings }) {
   const [tab, setTab] = React.useState('general');
   const [scan, setScan] = React.useState();
@@ -186,7 +241,8 @@ function ScanSettings({ settings, setSettings }) {
   React.useEffect(() => {
     const tick = async () => {
       setScan(await api.get('/api/scan/status'));
-      setSkipped(await api.get('/api/scan/skipped?limit=200').catch(() => []));
+      const skippedPayload = await api.get('/api/scan/skipped?limit=200').catch(() => ({ items: [] }));
+      setSkipped(skippedPayload.items || []);
     };
     tick();
     const id = setInterval(tick, 2000);
@@ -221,7 +277,7 @@ function ScanSettings({ settings, setSettings }) {
         </AppCard>
       </div>
       <AppCard title="Live Progress" className="card-solid"><pre>{JSON.stringify(scan, null, 2)}</pre></AppCard>
-      <AppCard title="Skipped Files" className="card-soft"><ul>{skipped.map((s) => <li key={s.id}>{s.reason}: {s.path}</li>)}</ul></AppCard>
+      <AppCard title="Skipped Files" className="card-soft"><ul>{skipped.map((s, idx) => <li key={`${s.path}-${idx}`}>{s.reason}: {s.path}</li>)}</ul></AppCard>
     </> : null}
 
     {tab === 'themes' ? <AppCard title="Themes" className="card-solid"><ThemesTab activeTheme={activeTheme} onThemeChange={applyTheme} /></AppCard> : null}
@@ -251,6 +307,7 @@ function App() {
       <NavLink to="/releases">RELEASES</NavLink>
       <NavLink to="/concerts">CONCERTS</NavLink>
       <NavLink to="/wishlist">WISHLIST</NavLink>
+      <NavLink to="/scan">SCAN</NavLink>
       <NavLink to="/settings">SETTINGS</NavLink>
     </aside>
     <main className="content">
@@ -263,6 +320,7 @@ function App() {
         <Route path="/concerts" element={<Placeholder title="Concerts" />} />
         <Route path="/wishlist" element={<Placeholder title="Wishlist" />} />
         <Route path="/artist/:artistKey" element={<ArtistPage />} />
+        <Route path="/scan" element={<ScanPage />} />
         <Route path="/settings" element={<ScanSettings settings={settings} setSettings={setSettings} />} />
       </Routes>
     </main>

@@ -4,6 +4,14 @@ const crypto = require('node:crypto');
 const { slugifyArtistName, shortHash } = require('./slug');
 
 const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.wav']);
+const CANONICAL_SKIP_REASONS = new Set([
+  'unreadable',
+  'unsupported_extension',
+  'missing_tags',
+  'hidden_path',
+  'other'
+]);
+const MAX_SKIPPED_SAMPLES = 2000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -503,17 +511,31 @@ class Scanner {
   }
 
   normalizeSkipReason(reason) {
-    const value = String(reason || 'unknown').toLowerCase();
-    if (value.startsWith('unsupported-extension')) return 'unsupported extension';
-    if (value.startsWith('unreadable') || value.startsWith('unreadable-directory') || value.startsWith('unreadable-path')) return 'unreadable';
-    if (value.startsWith('missing-tags')) return 'missing tags';
-    if (value.startsWith('deduped')) return 'duplicate';
-    if (value.startsWith('parse-error')) return 'parse error';
-    return reason || 'other';
+    const raw = String(reason || '').trim();
+    if (!raw) return 'other';
+
+    const normalized = raw.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+    if (CANONICAL_SKIP_REASONS.has(normalized)) return normalized;
+
+    if (normalized.startsWith('unsupported_extension')) return 'unsupported_extension';
+    if (normalized.startsWith('unreadable') || normalized.startsWith('broken_symlink')) return 'unreadable';
+    if (normalized.startsWith('missing_tags') || normalized.startsWith('missing_tag')) return 'missing_tags';
+    if (normalized.startsWith('hidden_path')) return 'hidden_path';
+
+    return 'other';
   }
 
   pushSkip(skipped, filePath, reason) {
-    skipped.push({ filePath, reason: this.normalizeSkipReason(reason) });
+    const reasonText = String(reason || '');
+    const [rawReason, ...messageParts] = reasonText.split(':');
+    const extValue = path.extname(filePath || '').toLowerCase();
+    skipped.push({
+      filePath,
+      reason: this.normalizeSkipReason(rawReason),
+      ext: extValue || null,
+      message: messageParts.length ? messageParts.join(':').trim() : null,
+      at: nowIso()
+    });
   }
 
   updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists, skippedFiles, skippedReasons, currentPath }) {
@@ -526,12 +548,32 @@ class Scanner {
 
   recordSkipped(scanStartedAt, skipped) {
     if (!skipped.length) return;
-    const insert = this.db.prepare('INSERT INTO scan_skipped(scanStartedAt, filePath, reason, createdAt) VALUES (?, ?, ?, ?)');
-    const createdAt = nowIso();
+    const insert = this.db.prepare('INSERT INTO scan_skipped(scanStartedAt, filePath, reason, ext, message, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
+    const trimOverflow = this.db.prepare(`
+      DELETE FROM scan_skipped
+      WHERE id IN (
+        SELECT id
+        FROM scan_skipped
+        ORDER BY id DESC
+        LIMIT -1 OFFSET ?
+      )
+    `);
     const runInsert = this.db.transaction((items) => {
-      for (const item of items) insert.run(scanStartedAt, item.filePath, item.reason, createdAt);
+      for (const item of items) {
+        insert.run(scanStartedAt, item.filePath, item.reason, item.ext, item.message, item.at || nowIso());
+      }
+      trimOverflow.run(MAX_SKIPPED_SAMPLES);
     });
     runInsert(skipped);
+  }
+
+  normalizeSkippedReasonsBreakdown(reasons) {
+    const out = {};
+    for (const [reason, count] of Object.entries(reasons || {})) {
+      const canonical = this.normalizeSkipReason(reason);
+      out[canonical] = (out[canonical] || 0) + Number(count || 0);
+    }
+    return out;
   }
 
   computeDedupeKey(metadata) {
@@ -542,9 +584,11 @@ class Scanner {
   getStatus() {
     const row = this.db.prepare('SELECT * FROM scan_state WHERE id = 1').get();
     const parsed = row?.skippedReasonsJson ? JSON.parse(row.skippedReasonsJson) : {};
+    const normalizedReasons = this.normalizeSkippedReasonsBreakdown(parsed);
     return {
       ...row,
-      skippedReasonsBreakdown: parsed
+      skippedReasonsJson: JSON.stringify(normalizedReasons),
+      skippedReasonsBreakdown: normalizedReasons
     };
   }
 
