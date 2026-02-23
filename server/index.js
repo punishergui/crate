@@ -350,7 +350,7 @@ app.get('/api/scan/skipped', async (req, reply) => {
 
   const where = conditions.join(' AND ');
   const items = db.prepare(`
-    SELECT filePath AS path, reason, ext, message, createdAt AS at
+    SELECT filePath AS path, reason, ext, message, detailsJson, createdAt AS at
     FROM scan_skipped
     WHERE ${where}
     ORDER BY id DESC
@@ -367,17 +367,20 @@ app.get('/api/scan/skipped/extensions', async (req, reply) => {
     return reply.code(400).send({ error: 'limit must be an integer between 1 and 500' });
   }
 
+  const reasonInput = typeof req.query.reason === 'string' ? req.query.reason.trim() : '';
+  const reason = reasonInput ? scanner.normalizeSkipReason(reasonInput) : 'unsupported_extension';
+
   const latestScan = db.prepare('SELECT scanStartedAt FROM scan_skipped ORDER BY id DESC LIMIT 1').get();
   if (!latestScan?.scanStartedAt) return { items: [] };
 
   const items = db.prepare(`
     SELECT ext, COUNT(*) AS count
     FROM scan_skipped
-    WHERE scanStartedAt = ? AND reason = 'unsupported_extension' AND ext IS NOT NULL AND ext != ''
+    WHERE scanStartedAt = ? AND reason = ? AND ext IS NOT NULL AND ext != ''
     GROUP BY ext
     ORDER BY count DESC, ext ASC
     LIMIT ?
-  `).all(latestScan.scanStartedAt, limit);
+  `).all(latestScan.scanStartedAt, reason, limit);
 
   return { items };
 });

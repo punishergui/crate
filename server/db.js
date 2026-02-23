@@ -117,6 +117,7 @@ function initDb() {
       reason TEXT NOT NULL,
       ext TEXT,
       message TEXT,
+      detailsJson TEXT,
       createdAt TEXT NOT NULL
     );
 
@@ -311,6 +312,9 @@ function initDb() {
   }
   if (!scanSkippedColumns.some((column) => column.name === 'message')) {
     db.exec('ALTER TABLE scan_skipped ADD COLUMN message TEXT');
+  }
+  if (!scanSkippedColumns.some((column) => column.name === 'detailsJson')) {
+    db.exec('ALTER TABLE scan_skipped ADD COLUMN detailsJson TEXT');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_scan_skipped_reason_created ON scan_skipped(reason, createdAt DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_scan_skipped_ext ON scan_skipped(ext)');

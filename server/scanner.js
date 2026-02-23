@@ -7,9 +7,10 @@ const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.wav']);
 const CANONICAL_SKIP_REASONS = new Set([
   'unreadable',
   'unsupported_extension',
+  'permission_denied',
   'missing_tags',
+  'tag_mismatch',
   'hidden_path',
-  'other'
 ]);
 const MAX_SKIPPED_SAMPLES = 2000;
 
@@ -30,6 +31,21 @@ function normalizeTagValue(value) {
   return text || null;
 }
 
+function classifyFsError(error) {
+  if (error && (error.code === 'EACCES' || error.code === 'EPERM')) {
+    return 'permission_denied';
+  }
+  return 'unreadable';
+}
+
+function buildFsErrorDetails(error) {
+  return {
+    code: error?.code || null,
+    errno: error?.errno ?? null,
+    message: error?.message || String(error || '')
+  };
+}
+
 function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath) {
   if (depth > maxDepth) return results;
 
@@ -37,7 +53,11 @@ function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (error) {
-    onSkip?.(dir, `unreadable-directory: ${error.message}`);
+    onSkip?.(dir, {
+      reason: classifyFsError(error),
+      message: error?.code || null,
+      detailsJson: buildFsErrorDetails(error)
+    });
     return results;
   }
 
@@ -279,7 +299,11 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onS
     try {
       lst = fs.lstatSync(fullPath);
     } catch (error) {
-      onSkip?.(fullPath, `unreadable-path: ${error.message}`);
+      onSkip?.(fullPath, {
+        reason: classifyFsError(error),
+        message: error?.code || null,
+        detailsJson: buildFsErrorDetails(error)
+      });
       continue;
     }
 
@@ -289,7 +313,11 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onS
       try {
         stat = fs.statSync(fullPath);
       } catch (error) {
-        onSkip?.(fullPath, `broken-symlink: ${error.message}`);
+        onSkip?.(fullPath, {
+          reason: classifyFsError(error),
+          message: error?.code || null,
+          detailsJson: buildFsErrorDetails(error)
+        });
         continue;
       }
     }
@@ -512,28 +540,39 @@ class Scanner {
 
   normalizeSkipReason(reason) {
     const raw = String(reason || '').trim();
-    if (!raw) return 'other';
+    if (!raw) return 'unreadable';
 
     const normalized = raw.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
     if (CANONICAL_SKIP_REASONS.has(normalized)) return normalized;
 
     if (normalized.startsWith('unsupported_extension')) return 'unsupported_extension';
-    if (normalized.startsWith('unreadable') || normalized.startsWith('broken_symlink')) return 'unreadable';
+    if (normalized.startsWith('permission_denied')) return 'permission_denied';
+    if (normalized.startsWith('tag_mismatch') || normalized.includes('mismatch')) return 'tag_mismatch';
+    if (normalized.startsWith('unreadable') || normalized.startsWith('broken_symlink') || normalized.startsWith('parse_error') || normalized.startsWith('deduped')) return 'unreadable';
     if (normalized.startsWith('missing_tags') || normalized.startsWith('missing_tag')) return 'missing_tags';
     if (normalized.startsWith('hidden_path')) return 'hidden_path';
 
-    return 'other';
+    return 'unreadable';
   }
 
   pushSkip(skipped, filePath, reason) {
-    const reasonText = String(reason || '');
+    const reasonInput = typeof reason === 'string' ? { reason } : (reason || {});
+    const reasonText = String(reasonInput.reason || '');
     const [rawReason, ...messageParts] = reasonText.split(':');
     const extValue = path.extname(filePath || '').toLowerCase();
+    const message = reasonInput.message !== undefined
+      ? (reasonInput.message === null ? null : String(reasonInput.message))
+      : (messageParts.length ? messageParts.join(':').trim() : null);
+    let canonicalReason = this.normalizeSkipReason(rawReason);
+    if (String(message || '').toLowerCase().startsWith('mismatch:')) {
+      canonicalReason = 'tag_mismatch';
+    }
     skipped.push({
       filePath,
-      reason: this.normalizeSkipReason(rawReason),
+      reason: canonicalReason,
       ext: extValue || null,
-      message: messageParts.length ? messageParts.join(':').trim() : null,
+      message,
+      detailsJson: reasonInput.detailsJson ? JSON.stringify(reasonInput.detailsJson) : null,
       at: nowIso()
     });
   }
@@ -548,7 +587,7 @@ class Scanner {
 
   recordSkipped(scanStartedAt, skipped) {
     if (!skipped.length) return;
-    const insert = this.db.prepare('INSERT INTO scan_skipped(scanStartedAt, filePath, reason, ext, message, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
+    const insert = this.db.prepare('INSERT INTO scan_skipped(scanStartedAt, filePath, reason, ext, message, detailsJson, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
     const trimOverflow = this.db.prepare(`
       DELETE FROM scan_skipped
       WHERE id IN (
@@ -560,7 +599,7 @@ class Scanner {
     `);
     const runInsert = this.db.transaction((items) => {
       for (const item of items) {
-        insert.run(scanStartedAt, item.filePath, item.reason, item.ext, item.message, item.at || nowIso());
+        insert.run(scanStartedAt, item.filePath, item.reason, item.ext, item.message, item.detailsJson || null, item.at || nowIso());
       }
       trimOverflow.run(MAX_SKIPPED_SAMPLES);
     });
@@ -657,21 +696,41 @@ class Scanner {
           try {
             metadata = await this.buildTrackMetadata(track, artistName, seenAt);
           } catch (error) {
-            this.pushSkip(skipped, track.path, `parse-error:${error.message || error}`);
+            this.pushSkip(skipped, track.path, {
+              reason: classifyFsError(error),
+              message: error?.code || null,
+              detailsJson: buildFsErrorDetails(error)
+            });
             continue;
           }
 
           const albumName = normalizeTagValue(metadata.tagInfo?.album);
-          const albumArtist = normalizeTagValue(metadata.tagInfo?.albumArtist || metadata.tagInfo?.artist);
-          if (!albumName || !albumArtist) {
-            this.pushSkip(skipped, track.path, 'missing_tags');
+          const albumArtist = normalizeTagValue(metadata.tagInfo?.albumArtist);
+          const artist = normalizeTagValue(metadata.tagInfo?.artist);
+          const missing = [];
+          if (!artist) missing.push('artist');
+          if (!albumName) missing.push('album');
+          if (!albumArtist) missing.push('album_artist');
+          if (missing.length) {
+            this.pushSkip(skipped, track.path, {
+              reason: 'missing_tags',
+              message: `missing:${missing.join(',')}`,
+              detailsJson: { detectedTags: metadata.tagInfo || null }
+            });
             continue;
           }
 
           const normalizedTaggedArtist = normalizeCompareValue(albumArtist);
           const normalizedArtist = normalizeCompareValue(artistName);
           if (normalizedArtist && normalizedTaggedArtist && normalizedArtist !== normalizedTaggedArtist) {
-            this.pushSkip(skipped, track.path, `missing-tags:mismatch:${albumArtist}`);
+            this.pushSkip(skipped, track.path, {
+              reason: 'tag_mismatch',
+              message: `mismatch:${albumArtist}`,
+              detailsJson: {
+                detectedTags: metadata.tagInfo || null,
+                expectedArtist: artistName
+              }
+            });
             continue;
           }
 
