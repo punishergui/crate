@@ -1,0 +1,13 @@
+html[data-theme='neon-djent'] {
+  --bg: #070a0f;
+  --surface: #131b24;
+  --text: #ecf9ff;
+  --muted: #8da3b6;
+  --border: rgb(117 237 255 / 30%);
+  --accent: #1de5ff;
+  --accent2: #b56dff;
+  --glow: rgb(29 229 255 / 45%);
+  --danger: #ff5e83;
+  --warning: #ffc35a;
+  --success: #5ef597;
+}

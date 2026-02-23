@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import './styles.css';
 
@@ -19,311 +19,314 @@ const api = {
   post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 };
 
-const ARTWORK_PLACEHOLDER = '/artwork-placeholder.svg';
-
-function artworkUrl(albumId, size = 512) {
-  return `/api/artwork/album/${albumId}?size=${size}`;
-}
-
 const THEMES = [
-  { id: 'neon-djent', name: 'Neon Djent', description: 'Dark charcoal with neon cyan + purple glow accents.' },
-  { id: 'classic-dark', name: 'Classic Dark', description: 'Simple neutral dark fallback theme.' }
+  { id: 'neon-djent', name: 'Neon Djent', description: 'Dark high-contrast palette with cyan and violet accents.' },
+  { id: 'classic-dark', name: 'Classic Dark', description: 'A calmer neutral dark theme with blue accents.' }
 ];
 
-function AppCard({ title, actions, children, className = 'card-solid' }) {
-  return <section className={`app-card ${className}`}>
-    <header className="card-top"><h2>{title}</h2><div>{actions}</div></header>
-    <div>{children}</div>
+const NAV_ITEMS = [
+  { to: '/', label: 'Dashboard' },
+  { to: '/library', label: 'Library' },
+  { to: '/scan-report', label: 'Scan Report' },
+  { to: '/settings', label: 'Settings' }
+];
+
+const REASONS = ['missing_tags', 'tag_mismatch', 'unsupported_extension', 'hidden_path', 'permission_denied', 'unreadable'];
+
+function safeParseDetails(raw) {
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return { raw }; }
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function useScanStatusPolling() {
+  const [scanStatus, setScanStatus] = React.useState(null);
+
+  React.useEffect(() => {
+    let timerId;
+    let closed = false;
+
+    const tick = async () => {
+      const payload = await api.get('/api/scan/status').catch(() => null);
+      if (closed) return;
+      setScanStatus(payload);
+      const nextDelay = payload?.status === 'running' ? 1000 : 10000;
+      timerId = window.setTimeout(tick, nextDelay);
+    };
+
+    tick();
+    return () => {
+      closed = true;
+      clearTimeout(timerId);
+    };
+  }, []);
+
+  return [scanStatus, setScanStatus];
+}
+
+function AppCard({ title, children, right }) {
+  return <section className="app-card">
+    <header className="card-head">
+      <h2>{title}</h2>
+      {right || null}
+    </header>
+    {children}
   </section>;
 }
 
 function TopBar({ scanStatus, onScan }) {
   return <header className="top-bar">
-    <div className="status-pill"><span className={`status-dot ${scanStatus?.status === 'running' ? 'live' : ''}`} />{scanStatus?.status || 'idle'}</div>
-    <input className="search" placeholder="SEARCH ARTISTS, ALBUMS, TRACKS" />
-    <button className="scan-led" onClick={onScan}>SCAN</button>
-    <Link to="/settings" className="icon-link">⚙</Link>
+    <label className="top-search-wrap" htmlFor="global-search">
+      <span className="sr-only">Search</span>
+      <input id="global-search" className="top-search" placeholder="Search artists, albums, tracks" />
+    </label>
+    <div className="top-actions">
+      <div className="status-pill" aria-live="polite">
+        <span className={`status-dot ${scanStatus?.status === 'running' ? 'running' : ''}`} />
+        <span>{scanStatus?.status || 'idle'}</span>
+      </div>
+      <button className="btn btn-accent" onClick={onScan}>Start Scan</button>
+    </div>
   </header>;
 }
 
-function AlbumTile({ album, onToggleOwned, size = 512 }) {
-  return <article className="album-tile">
-    <img className="artwork" src={artworkUrl(album.id, size)} alt={`${album.title} cover`} loading="lazy" onError={(e) => {
-      e.currentTarget.onerror = null;
-      e.currentTarget.src = ARTWORK_PLACEHOLDER;
-    }} />
-    <div className="tile-meta"><strong>{album.title}</strong><span>{album.artistName}</span></div>
-    <div className="tile-hover">
-      <button>Play</button>
-      <Link to={`/artist/${album.artistSlug || album.artistId}`}>Open</Link>
-      {onToggleOwned ? <button onClick={() => onToggleOwned(album.id, !album.owned)}>{album.owned ? 'Missing' : 'Owned'}</button> : null}
-    </div>
-  </article>;
-}
-
 function Dashboard() {
+  const [data, setData] = React.useState(null);
 
-  const [data, setData] = React.useState();
   React.useEffect(() => { api.get('/api/dashboard').then(setData).catch(() => setData(null)); }, []);
 
-  return <div className="dashboard-grid">
-    <div className="col-left">
-      <AppCard title="Concerts" className="panel-metal"><ul><li>Connect event provider to populate shows.</li></ul></AppCard>
-      <AppCard title="Recent Activity" className="card-soft"><div className="recent-cards">{(data?.recent || []).slice(0, 8).map((a) => <AlbumTile key={a.id} album={a} size={256} />)}</div></AppCard>
+  return <section className="page-stack">
+    <h1>Dashboard</h1>
+    <div className="stat-grid">
+      <AppCard title="Library">
+        <p>{data?.stats?.artists ?? 0} artists · {data?.stats?.albums ?? 0} albums · {data?.stats?.tracks ?? 0} tracks</p>
+      </AppCard>
+      <AppCard title="Missing Albums">
+        <p>{data?.missingTotal ?? 0} albums still marked missing.</p>
+      </AppCard>
+      <AppCard title="Recent">
+        <p>{(data?.recent || []).length} recent items available.</p>
+      </AppCard>
     </div>
-    <div className="col-right">
-      <AppCard title="New Releases" className="card-solid"><div className="album-grid">{(data?.recent || []).slice(0, 8).map((a) => <AlbumTile key={a.id} album={a} />)}</div></AppCard>
-      <div className="mini-grid">
-        <AppCard title="Library Overview" className="card-soft"><p>{data?.stats?.artists ?? '-'} artists · {data?.stats?.albums ?? '-'} albums · {data?.stats?.tracks ?? '-'} tracks</p></AppCard>
-        <AppCard title="Missing Albums" className="card-soft"><ul className="missing-list">{(data?.missing || []).slice(0, 6).map((item, idx) => <li key={`${item.artistId}-${item.title}-${idx}`}><img src={ARTWORK_PLACEHOLDER} alt="missing album" /><span>{item.artistName} — {item.title}</span></li>)}</ul><p>{data?.missingTotal ?? 0} total</p></AppCard>
-        <AppCard title="Downloads" className="card-soft"><p>No active downloads</p></AppCard>
-      </div>
-    </div>
-  </div>;
-}
-
-function Collection() {
-  const [q, setQ] = React.useState('');
-  const [ownedFilter, setOwnedFilter] = React.useState('all');
-  const [list, setList] = React.useState({ items: [] });
-  const load = React.useCallback(() => {
-    const ownedQuery = ownedFilter === 'all' ? '' : `&owned=${ownedFilter}`;
-    api.get(`/api/library/albums?search=${encodeURIComponent(q)}&page=1&pageSize=60${ownedQuery}`).then(setList);
-  }, [ownedFilter, q]);
-  React.useEffect(() => { load(); }, [load]);
-
-  const toggleOwned = async (id, owned) => { await api.put(`/api/library/albums/${id}/owned`, { owned }); load(); };
-
-  return <section>
-    <h1>Collection</h1>
-    <div className="filters inline-filters">
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artist or album" />
-      <button onClick={() => setOwnedFilter('1')}>Owned</button><button onClick={() => setOwnedFilter('0')}>Missing</button><button onClick={() => setOwnedFilter('all')}>All</button>
-    </div>
-    <div className="album-grid collection-grid">{list.items.map((a) => <AlbumTile key={a.id} album={a} onToggleOwned={toggleOwned} />)}</div>
   </section>;
 }
 
-function ArtistPage() {
-  const { artistKey } = useParams();
-  const navigate = useNavigate();
-  const [data, setData] = React.useState();
-  const [summary, setSummary] = React.useState();
-  const [status, setStatus] = React.useState('');
+function Library() {
+  const [q, setQ] = React.useState('');
+  const [list, setList] = React.useState({ items: [] });
 
   React.useEffect(() => {
-    (async () => {
-      let artist;
-      if (/^\d+$/.test(String(artistKey))) {
-        const legacy = await api.get(`/api/library/artists/${artistKey}`);
-        navigate(`/artist/${legacy.artist.slug || legacy.artist.id}`, { replace: true });
-        artist = legacy.artist;
-      } else {
-        artist = await api.get(`/api/artist/by-slug/${encodeURIComponent(artistKey)}`);
-      }
-      setData(await api.get(`/api/artist/${artist.id}/overview`));
-      setSummary(await api.get(`/api/expected/artist/${artist.id}/summary`).catch(() => null));
-    })().catch((e) => setStatus(e.message));
-  }, [artistKey, navigate]);
+    api.get(`/api/library/albums?search=${encodeURIComponent(q)}&page=1&pageSize=60`).then(setList).catch(() => setList({ items: [] }));
+  }, [q]);
 
-  const deepRescan = async () => {
-    if (!data?.artist?.id) return;
-    const response = await api.post(`/api/scan/artist/${data.artist.id}/deep`, { recursive: true, maxDepth: 6 });
-    setStatus(response.started ? 'Deep scan started.' : 'Scan already running.');
+  return <section className="page-stack">
+    <h1>Library</h1>
+    <input value={q} onChange={(event) => setQ(event.target.value)} className="input" placeholder="Filter by artist or album" />
+    <div className="simple-list">
+      {list.items.map((item) => <article key={item.id} className="list-item">
+        <strong>{item.title}</strong>
+        <span>{item.artistName}</span>
+      </article>)}
+      {!list.items.length ? <p className="muted">No albums found.</p> : null}
+    </div>
+  </section>;
+}
+
+function ThemeSettings() {
+  const [activeTheme, setActiveTheme] = React.useState(window.CRATE_THEME?.get?.() || 'neon-djent');
+
+  const applyTheme = (themeId) => {
+    window.CRATE_THEME?.apply?.(themeId);
+    setActiveTheme(themeId);
   };
 
-  if (!data) return <section>{status || 'Loading...'}</section>;
-  return <section>
-    <div className="artist-hero panel-metal">
-      <h1>{data.artist.name}</h1><p>Owned {summary?.ownedCount ?? data.owned.length} · Missing {summary?.missingCount ?? 0}</p>
-      <button className="scan-led" onClick={deepRescan}>DEEP SCAN</button>
-    </div>
-    {status ? <p>{status}</p> : null}
-    <AppCard title="Albums"><div className="album-grid collection-grid">{data.owned.map((a) => <AlbumTile key={a.id} album={{ ...a, artistName: data.artist.name, artistSlug: data.artist.slug }} />)}</div></AppCard>
+  return <section className="page-stack">
+    <h1>Settings</h1>
+    <AppCard title="Themes" right={<span className="muted">Active: {activeTheme}</span>}>
+      <div className="themes-grid">
+        {THEMES.map((theme) => <article key={theme.id} className={`theme-card ${activeTheme === theme.id ? 'active' : ''}`}>
+          <div className="swatch" data-theme-preview={theme.id} />
+          <strong>{theme.name}</strong>
+          <p>{theme.description}</p>
+          <button className="btn" onClick={() => applyTheme(theme.id)}>
+            {activeTheme === theme.id ? 'Applied' : 'Apply'}
+          </button>
+        </article>)}
+      </div>
+    </AppCard>
   </section>;
 }
 
-function ThemesTab({ activeTheme, onThemeChange }) {
-  return <div className="themes-grid">{THEMES.map((theme) => <button key={theme.id} className={`theme-card ${activeTheme === theme.id ? 'active' : ''}`} onClick={() => onThemeChange(theme.id)}>
-    <div className="swatch" data-theme-preview={theme.id} />
-    <strong>{theme.name}</strong>
-    <p>{theme.description}</p>
-  </button>)}</div>;
-}
-
-
-function LibraryArtworkSettings({ settings, setSettings, save }) {
-  const [jobStatus, setJobStatus] = React.useState({ queued: 0, running: 0, done: 0, error: 0 });
-  React.useEffect(() => {
-    const tick = () => api.get('/api/artwork/status').then(setJobStatus).catch(() => null);
-    tick();
-    const id = setInterval(tick, 2500);
-    return () => clearInterval(id);
-  }, []);
-
-  return <AppCard title="Library" className="card-soft">
-    <p>Path: {settings?.libraryPath || '-'}</p>
-    <label><input type="checkbox" checked={Boolean(settings?.artworkPreferLocal)} onChange={(e) => setSettings({ ...settings, artworkPreferLocal: e.target.checked })} /> Prefer local artwork</label>
-    <label><input type="checkbox" checked={Boolean(settings?.artworkAllowRemote)} onChange={(e) => setSettings({ ...settings, artworkAllowRemote: e.target.checked })} /> Allow remote artwork</label>
-    <div className="inline-filters">
-      <button onClick={save}>Save artwork settings</button>
-      <button onClick={() => api.post('/api/artwork/refresh-all')}>Refresh all artwork</button>
-    </div>
-    <p>Jobs — queued: {jobStatus.queued} · running: {jobStatus.running} · done: {jobStatus.done} · error: {jobStatus.error}</p>
-  </AppCard>;
-}
-
-
-function ScanPage() {
-  const [scan, setScan] = React.useState(null);
-  const [extensions, setExtensions] = React.useState([]);
+function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
   const [selectedReason, setSelectedReason] = React.useState('');
-  const [samples, setSamples] = React.useState([]);
+  const [selectedExt, setSelectedExt] = React.useState('');
+  const [searchText, setSearchText] = React.useState('');
+  const [offset, setOffset] = React.useState(0);
+  const [rows, setRows] = React.useState([]);
+  const [total, setTotal] = React.useState(0);
+  const [extensions, setExtensions] = React.useState([]);
+  const [selectedItem, setSelectedItem] = React.useState(null);
+  const limit = 50;
 
   React.useEffect(() => {
-    const tick = async () => {
-      const status = await api.get('/api/scan/status').catch(() => null);
-      setScan(status);
-      const extPayload = await api.get('/api/scan/skipped/extensions?limit=20').catch(() => ({ items: [] }));
-      setExtensions(extPayload.items || []);
-    };
-    tick();
-    const id = setInterval(tick, 2500);
-    return () => clearInterval(id);
-  }, []);
-
-  React.useEffect(() => {
-    if (!selectedReason) return;
-    api.get(`/api/scan/skipped?reason=${encodeURIComponent(selectedReason)}&limit=100`)
-      .then((payload) => setSamples(payload.items || []))
-      .catch(() => setSamples([]));
+    if (selectedReason !== 'unsupported_extension') {
+      setExtensions([]);
+      setSelectedExt('');
+      return;
+    }
+    api.get('/api/scan/skipped/extensions?reason=unsupported_extension&limit=20')
+      .then((payload) => setExtensions(payload.items || []))
+      .catch(() => setExtensions([]));
   }, [selectedReason]);
 
-  const reasons = Object.entries(scan?.skippedReasonsBreakdown || {});
+  React.useEffect(() => {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (selectedReason) query.set('reason', selectedReason);
 
-  return <section>
-    <h1>Scan</h1>
-    <div className="mini-grid">
-      <AppCard title="Last Scan" className="card-soft"><p>{scan?.finishedAt || scan?.startedAt || 'Never'}</p></AppCard>
-      <AppCard title="Scanned" className="card-soft"><p>{scan?.scannedFiles ?? 0} files · {scan?.scannedAlbums ?? 0} albums</p></AppCard>
-      <AppCard title="Skipped" className="card-soft"><p>{scan?.skippedFiles ?? 0} files</p></AppCard>
+    api.get(`/api/scan/skipped?${query.toString()}`)
+      .then((payload) => {
+        setRows(payload.items || []);
+        setTotal(payload.total || 0);
+      })
+      .catch(() => {
+        setRows([]);
+        setTotal(0);
+      });
+  }, [selectedReason, offset]);
+
+  const visibleRows = rows.filter((row) => {
+    const matchesExt = selectedExt ? row.ext === selectedExt : true;
+    const haystack = `${row.path || ''} ${row.message || ''}`.toLowerCase();
+    const matchesText = searchText ? haystack.includes(searchText.toLowerCase()) : true;
+    return matchesExt && matchesText;
+  });
+
+  const reasonEntries = Object.entries(scanStatus?.skippedReasonsBreakdown || {});
+
+  const copyText = async (value) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(value).catch(() => null);
+  };
+
+  const refreshStatus = async () => {
+    const payload = await api.get('/api/scan/status').catch(() => null);
+    setScanStatus(payload);
+  };
+
+  return <section className="page-stack">
+    <div className="split-head">
+      <h1>Scan Report</h1>
+      <button className="btn btn-accent" onClick={() => onStartScan().then(refreshStatus)}>Start Scan</button>
     </div>
 
-    <AppCard title="Skipped Reasons" className="card-solid">
-      <table className="scan-table"><thead><tr><th>Reason</th><th>Count</th></tr></thead><tbody>
-        {reasons.map(([reason, count]) => <tr key={reason}><td><button className="link-button" onClick={() => setSelectedReason(reason)}>{reason}</button></td><td>{count}</td></tr>)}
-      </tbody></table>
-      {(scan?.skippedReasonsBreakdown?.missing_tags || 0) > 0 ? <p className="hint">These files are missing required metadata tags (Artist/Album/Title/Track).</p> : null}
-      {(scan?.skippedReasonsBreakdown?.unsupported_extension || 0) > 0 ? <p className="hint">These files are not audio formats Crate imports. Common examples: .jpg, .nfo, .cue…</p> : null}
+    <div className="stat-grid">
+      <AppCard title="Last Scan"><p>{formatDate(scanStatus?.finishedAt || scanStatus?.startedAt)}</p></AppCard>
+      <AppCard title="Status"><p>{scanStatus?.status || 'idle'}</p></AppCard>
+      <AppCard title="Scanned"><p>{scanStatus?.scannedFiles ?? 0} files · {scanStatus?.scannedAlbums ?? 0} albums · {scanStatus?.scannedArtists ?? 0} artists</p></AppCard>
+    </div>
+
+    <AppCard title="Skipped Reasons">
+      <div className="chip-row">
+        {reasonEntries.map(([reason, count]) => <button
+          key={reason}
+          className={`chip ${selectedReason === reason ? 'active' : ''}`}
+          onClick={() => {
+            setSelectedReason(reason === selectedReason ? '' : reason);
+            setOffset(0);
+          }}
+        >
+          {reason} ({count})
+        </button>)}
+      </div>
     </AppCard>
 
-    <AppCard title="Top Unsupported Extensions" className="card-soft">
-      <ul>{extensions.map((item) => <li key={item.ext}>{item.ext || '(none)'} — {item.count}</li>)}</ul>
+    <AppCard title="Skipped Files" right={<span className="muted">{offset + 1}-{Math.min(offset + limit, total)} of {total}</span>}>
+      <div className="filters-row">
+        <select value={selectedReason} onChange={(event) => { setSelectedReason(event.target.value); setOffset(0); }}>
+          <option value="">All reasons</option>
+          {REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+        </select>
+        <select value={selectedExt} onChange={(event) => setSelectedExt(event.target.value)} disabled={selectedReason !== 'unsupported_extension'}>
+          <option value="">All extensions</option>
+          {extensions.map((item) => <option key={item.ext || '(none)'} value={item.ext || ''}>{item.ext || '(none)'} ({item.count})</option>)}
+        </select>
+        <input className="input" placeholder="Search path or message" value={searchText} onChange={(event) => setSearchText(event.target.value)} />
+      </div>
+      <div className="table-wrap">
+        <table className="scan-table">
+          <thead><tr><th>When</th><th>Reason</th><th>Ext</th><th>Path</th><th>Message</th><th>Actions</th></tr></thead>
+          <tbody>
+            {visibleRows.map((item, index) => <tr key={`${item.path}-${item.at}-${index}`}>
+              <td>{formatDate(item.at)}</td>
+              <td>{item.reason}</td>
+              <td>{item.ext || '—'}</td>
+              <td className="path-cell">{item.path}</td>
+              <td>{item.message || '—'}</td>
+              <td><button className="btn btn-small" onClick={() => setSelectedItem(item)}>Details</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      {!visibleRows.length ? <p className="muted">No skipped rows matched the current filter.</p> : null}
+      <div className="pager">
+        <button className="btn" disabled={offset === 0} onClick={() => setOffset((value) => Math.max(0, value - limit))}>Previous</button>
+        <button className="btn" disabled={offset + limit >= total} onClick={() => setOffset((value) => value + limit)}>Next</button>
+      </div>
     </AppCard>
 
-    {selectedReason ? <div className="modal-backdrop" onClick={() => setSelectedReason('')}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <div className="card-top"><h2>Skipped Samples: {selectedReason}</h2><button onClick={() => setSelectedReason('')}>Close</button></div>
-        <ul className="sample-list">{samples.map((s, idx) => <li key={`${s.path}-${idx}`}><code>{s.path}</code>{s.message ? <span> — {s.message}</span> : null}</li>)}</ul>
+    {selectedItem ? <div className="modal-backdrop" role="presentation" onClick={() => setSelectedItem(null)}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Skipped file details" onClick={(event) => event.stopPropagation()}>
+        <div className="card-head"><h2>Skipped Item Details</h2><button className="btn" onClick={() => setSelectedItem(null)}>Close</button></div>
+        <dl className="details-grid">
+          <dt>Path</dt><dd>{selectedItem.path}</dd>
+          <dt>Reason</dt><dd>{selectedItem.reason}</dd>
+          <dt>Extension</dt><dd>{selectedItem.ext || '—'}</dd>
+          <dt>Message</dt><dd>{selectedItem.message || '—'}</dd>
+          <dt>When</dt><dd>{formatDate(selectedItem.at)}</dd>
+        </dl>
+        <div className="copy-row">
+          <button className="btn" onClick={() => copyText(selectedItem.path)}>Copy Path</button>
+          <button className="btn" onClick={() => copyText(JSON.stringify(safeParseDetails(selectedItem.detailsJson), null, 2))}>Copy Tags JSON</button>
+        </div>
+        <pre>{JSON.stringify(safeParseDetails(selectedItem.detailsJson), null, 2)}</pre>
       </div>
     </div> : null}
   </section>;
 }
 
-function ScanSettings({ settings, setSettings }) {
-  const [tab, setTab] = React.useState('general');
-  const [scan, setScan] = React.useState();
-  const [skipped, setSkipped] = React.useState([]);
-  const [maxDepth, setMaxDepth] = React.useState(4);
-  const [deep, setDeep] = React.useState(true);
-  const [activeTheme, setActiveTheme] = React.useState(window.CRATE_THEME?.get?.() || 'neon-djent');
-
-  React.useEffect(() => {
-    const tick = async () => {
-      setScan(await api.get('/api/scan/status'));
-      const skippedPayload = await api.get('/api/scan/skipped?limit=200').catch(() => ({ items: [] }));
-      setSkipped(skippedPayload.items || []);
-    };
-    tick();
-    const id = setInterval(tick, 2000);
-    return () => clearInterval(id);
-  }, []);
-
-  const startScan = () => api.post('/api/scan/start', { recursive: deep, maxDepth }).then((v) => setScan(v.status));
-  const save = async () => setSettings(await api.put('/api/settings', settings));
-  const applyTheme = (themeId) => { window.CRATE_THEME?.apply?.(themeId); setActiveTheme(themeId); };
-
-  return <section>
-    <h1>Settings</h1>
-    <nav className="settings-tabs">
-      {['general', 'library', 'scanner', 'themes', 'about'].map((t) => <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{t.toUpperCase()}</button>)}
-    </nav>
-
-    {tab === 'general' ? <AppCard title="General" className="card-soft"><p>General app preferences.</p></AppCard> : null}
-    {tab === 'library' ? <LibraryArtworkSettings settings={settings} setSettings={setSettings} save={save} /> : null}
-    {tab === 'about' ? <AppCard title="About" className="card-soft"><p>CRATE PWA</p></AppCard> : null}
-
-    {tab === 'scanner' ? <>
-      <div className="mini-grid">
-        <AppCard title="Scanner" className="panel-metal">
-          <label><input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} /> Deep Scan</label>
-          <label>Max depth <input type="number" min="1" max="20" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
-          <button className="scan-led" onClick={startScan}>Normal Scan</button>
-          <button onClick={() => api.post('/api/scan/cancel').then((v) => setScan(v.status))}>Cancel</button>
-        </AppCard>
-        <AppCard title="Appearance" className="card-soft">
-          <label>Accent <input value={settings?.accentColor || ''} onChange={(e) => setSettings({ ...settings, accentColor: e.target.value })} /></label>
-          <button onClick={save}>Save</button>
-        </AppCard>
-      </div>
-      <AppCard title="Live Progress" className="card-solid"><pre>{JSON.stringify(scan, null, 2)}</pre></AppCard>
-      <AppCard title="Skipped Files" className="card-soft"><ul>{skipped.map((s, idx) => <li key={`${s.path}-${idx}`}>{s.reason}: {s.path}</li>)}</ul></AppCard>
-    </> : null}
-
-    {tab === 'themes' ? <AppCard title="Themes" className="card-solid"><ThemesTab activeTheme={activeTheme} onThemeChange={applyTheme} /></AppCard> : null}
-  </section>;
-}
-
-function Placeholder({ title }) { return <section><h1>{title}</h1><p>Coming soon.</p></section>; }
-
 function App() {
-  const [settings, setSettings] = React.useState();
-  const [scanStatus, setScanStatus] = React.useState();
-  React.useEffect(() => { api.get('/api/settings').then(setSettings); }, []);
-  React.useEffect(() => {
-    const tick = () => api.get('/api/scan/status').then(setScanStatus).catch(() => null);
-    tick();
-    const id = setInterval(tick, 2500);
-    return () => clearInterval(id);
-  }, []);
+  const [scanStatus, setScanStatus] = useScanStatusPolling();
 
-  const startQuickScan = () => api.post('/api/scan/start', { recursive: true, maxDepth: 3 }).then((v) => setScanStatus(v.status));
+  const startScan = React.useCallback(async () => {
+    const payload = await api.post('/api/scan/start');
+    if (payload?.status) setScanStatus(payload.status);
+    return payload;
+  }, [setScanStatus]);
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <NavLink to="/">DASHBOARD</NavLink>
-      <NavLink to="/collection">COLLECTION</NavLink>
-      <NavLink to="/discover">DISCOVER</NavLink>
-      <NavLink to="/releases">RELEASES</NavLink>
-      <NavLink to="/concerts">CONCERTS</NavLink>
-      <NavLink to="/wishlist">WISHLIST</NavLink>
-      <NavLink to="/scan">SCAN</NavLink>
-      <NavLink to="/settings">SETTINGS</NavLink>
+      <div className="brand">CRATE</div>
+      <nav className="nav-list">
+        {NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}
+      </nav>
     </aside>
     <main className="content">
-      <TopBar scanStatus={scanStatus} onScan={startQuickScan} />
+      <TopBar scanStatus={scanStatus} onScan={startScan} />
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/collection" element={<Collection />} />
-        <Route path="/discover" element={<Placeholder title="Discover" />} />
-        <Route path="/releases" element={<Placeholder title="Releases" />} />
-        <Route path="/concerts" element={<Placeholder title="Concerts" />} />
-        <Route path="/wishlist" element={<Placeholder title="Wishlist" />} />
-        <Route path="/artist/:artistKey" element={<ArtistPage />} />
-        <Route path="/scan" element={<ScanPage />} />
-        <Route path="/settings" element={<ScanSettings settings={settings} setSettings={setSettings} />} />
+        <Route path="/library" element={<Library />} />
+        <Route path="/scan-report" element={<ScanReportPage scanStatus={scanStatus} setScanStatus={setScanStatus} onStartScan={startScan} />} />
+        <Route path="/settings" element={<ThemeSettings />} />
       </Routes>
     </main>
+    <nav className="mobile-nav">
+      {NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}
+    </nav>
   </div>;
 }
 
