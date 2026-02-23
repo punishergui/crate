@@ -328,15 +328,58 @@ app.get('/api/scan/skipped', async (req, reply) => {
   if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
     return reply.code(400).send({ error: 'limit must be an integer between 1 and 1000' });
   }
-  const startedAt = db.prepare('SELECT startedAt FROM scan_state WHERE id = 1').get()?.startedAt;
-  if (!startedAt) return [];
-  return db.prepare(`
-    SELECT id, filePath AS path, reason, createdAt
+
+  const reasonInput = typeof req.query.reason === 'string' ? req.query.reason.trim() : '';
+  const reason = reasonInput ? scanner.normalizeSkipReason(reasonInput) : '';
+  const prefix = typeof req.query.prefix === 'string' ? req.query.prefix.trim() : '';
+
+  const latestScan = db.prepare('SELECT scanStartedAt FROM scan_skipped ORDER BY id DESC LIMIT 1').get();
+  if (!latestScan?.scanStartedAt) return { items: [], total: 0 };
+
+  const conditions = ['scanStartedAt = @scanStartedAt'];
+  const params = { scanStartedAt: latestScan.scanStartedAt, limit };
+
+  if (reason) {
+    conditions.push('reason = @reason');
+    params.reason = reason;
+  }
+  if (prefix) {
+    conditions.push('filePath LIKE @prefix');
+    params.prefix = `${prefix}%`;
+  }
+
+  const where = conditions.join(' AND ');
+  const items = db.prepare(`
+    SELECT filePath AS path, reason, ext, message, createdAt AS at
     FROM scan_skipped
-    WHERE scanStartedAt = ?
+    WHERE ${where}
     ORDER BY id DESC
+    LIMIT @limit
+  `).all(params);
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM scan_skipped WHERE ${where}`).get(params).c;
+  return { items, total };
+});
+
+app.get('/api/scan/skipped/extensions', async (req, reply) => {
+  const limit = Number(req.query.limit ?? 50);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    return reply.code(400).send({ error: 'limit must be an integer between 1 and 500' });
+  }
+
+  const latestScan = db.prepare('SELECT scanStartedAt FROM scan_skipped ORDER BY id DESC LIMIT 1').get();
+  if (!latestScan?.scanStartedAt) return { items: [] };
+
+  const items = db.prepare(`
+    SELECT ext, COUNT(*) AS count
+    FROM scan_skipped
+    WHERE scanStartedAt = ? AND reason = 'unsupported_extension' AND ext IS NOT NULL AND ext != ''
+    GROUP BY ext
+    ORDER BY count DESC, ext ASC
     LIMIT ?
-  `).all(startedAt, limit);
+  `).all(latestScan.scanStartedAt, limit);
+
+  return { items };
 });
 
 app.post('/api/scan/artist/:id/deep', async (req, reply) => {

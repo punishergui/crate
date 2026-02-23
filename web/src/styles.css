@@ -15,7 +15,7 @@ button, input, select {
   padding: 8px 12px;
   transition: 120ms linear;
 }
-button:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 18px var(--accent-glow); }
+button:hover { border-color: var(--accent); box-shadow: var(--glow); }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 208px 1fr; }
 .sidebar { border-right: 1px solid var(--line); padding: 24px 8px; display: flex; flex-direction: column; gap: 4px; }
@@ -29,7 +29,7 @@ button:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent),
 .status-pill { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; color: var(--text-dim); display: inline-flex; align-items: center; gap: 8px; }
 .status-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--text-dim); }
 .status-dot.live { background: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
-.scan-led { border-color: var(--accent); box-shadow: 0 0 18px var(--accent-glow); }
+.scan-led { border-color: var(--accent); box-shadow: var(--glow); }
 
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 16px; }
 .col-left, .col-right, .mini-grid { display: grid; gap: 16px; }
@@ -56,16 +56,14 @@ button:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent),
 .artist-hero { margin-bottom: 16px; }
 pre { white-space: pre-wrap; word-break: break-word; color: var(--text-dim); }
 .settings-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.settings-tabs .active { border-color: var(--accent); box-shadow: 0 0 14px var(--accent-glow); }
+.settings-tabs .active { border-color: var(--accent); box-shadow: var(--glow); }
 .themes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
 .theme-card { text-align: left; }
-.theme-card.active { border-color: var(--accent); box-shadow: 0 0 16px var(--accent-glow); }
+.theme-card.active { border-color: var(--accent); box-shadow: var(--glow); }
 .theme-card p { color: var(--text-dim); margin: 8px 0 0; }
 .swatch { height: 56px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; }
-.swatch[data-theme-preview='neon-djent'] { background: linear-gradient(110deg, #050608, #151922, #ff6a00); }
-.swatch[data-theme-preview='ice'] { background: linear-gradient(110deg, #070b12, #182334, #63a4ff); }
-.swatch[data-theme-preview='worship'] { background: linear-gradient(110deg, #0c0905, #21180f, #d9a441); }
-.swatch[data-theme-preview='country'] { background: linear-gradient(110deg, #0d0906, #23170f, #b8863b); }
+.swatch[data-theme-preview='neon-djent'] { background: linear-gradient(110deg, #0b0f12, #1b2329, #28e6f0, #9d6bff); }
+.swatch[data-theme-preview='classic-dark'] { background: linear-gradient(110deg, #0a0d11, #1a202a, #4d8dff); }
 
 @media (max-width: 1100px) {
   .app-shell { grid-template-columns: 1fr; }
@@ -78,3 +76,12 @@ pre { white-space: pre-wrap; word-break: break-word; color: var(--text-dim); }
 .missing-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .missing-list li { display: flex; gap: 8px; align-items: center; }
 .missing-list img { width: 40px; height: 40px; border-radius: 6px; border: 1px solid var(--line); }
+
+.scan-table { width: 100%; border-collapse: collapse; }
+.scan-table th, .scan-table td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.link-button { background: transparent; border: none; color: var(--accent); padding: 0; cursor: pointer; }
+.hint { color: var(--text-dim); margin-top: 8px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: grid; place-items: center; padding: 24px; }
+.modal-card { width: min(900px, 100%); max-height: 80vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); padding: 16px; }
+.sample-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sample-list code { color: var(--text); }
