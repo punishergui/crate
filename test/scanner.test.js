@@ -78,6 +78,7 @@ function createTestDb() {
       reason TEXT NOT NULL,
       ext TEXT,
       message TEXT,
+      detailsJson TEXT,
       createdAt TEXT NOT NULL
     );
     CREATE TABLE jobs (
@@ -171,7 +172,7 @@ test('scanner dedupes duplicate hardlinks and records skipped reason breakdown',
 
   const status = scanner.getStatus();
   assert.equal(status.skippedFiles, 1);
-  assert.equal(status.skippedReasonsBreakdown.other, 1);
+  assert.equal(status.skippedReasonsBreakdown.unreadable, 1);
 });
 
 test('scanner groups same tagged album across different folders into one album', async () => {
@@ -206,10 +207,73 @@ test('scanner groups same tagged album across different folders into one album',
 });
 
 
-test('normalizeSkipReason canonicalizes legacy missing tags variants', () => {
+test('normalizeSkipReason canonicalizes legacy skip reason variants', () => {
   const db = createTestDb();
   const scanner = new Scanner(db);
   assert.equal(scanner.normalizeSkipReason('missing tags'), 'missing_tags');
-  assert.equal(scanner.normalizeSkipReason('missing-tags:mismatch:foo'), 'missing_tags');
+  assert.equal(scanner.normalizeSkipReason('missing-tags:mismatch:foo'), 'tag_mismatch');
   assert.equal(scanner.normalizeSkipReason('unsupported-extension:.jpg'), 'unsupported_extension');
+});
+
+
+test('normalizeSkipReason maps mismatch and permission variants to canonical keys', () => {
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  assert.equal(scanner.normalizeSkipReason('missing-tags:mismatch:foo'), 'tag_mismatch');
+  assert.equal(scanner.normalizeSkipReason('permission denied'), 'permission_denied');
+  assert.equal(scanner.normalizeSkipReason('EACCES'), 'unreadable');
+});
+
+test('scanner classifies mismatch message as tag_mismatch', () => {
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  const skipped = [];
+  scanner.pushSkip(skipped, '/tmp/a.mp3', { reason: 'missing-tags:mismatch:Zach Williams & Dolly Parton' });
+  assert.equal(skipped[0].reason, 'tag_mismatch');
+  assert.equal(skipped[0].message, 'mismatch:Zach Williams & Dolly Parton');
+});
+
+test('scanner classifies EACCES read failure as permission_denied', () => {
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  const skipped = [];
+  scanner.pushSkip(skipped, '/tmp/a.mp3', {
+    reason: 'permission_denied',
+    message: 'EACCES',
+    detailsJson: { code: 'EACCES', errno: -13 }
+  });
+  assert.equal(skipped[0].reason, 'permission_denied');
+  assert.equal(skipped[0].message, 'EACCES');
+});
+
+test('scanner classifies missing required tags as missing_tags', () => {
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  const skipped = [];
+  scanner.pushSkip(skipped, '/tmp/a.mp3', {
+    reason: 'missing_tags',
+    message: 'missing:artist,album',
+    detailsJson: { detectedTags: { albumArtist: 'Somebody' } }
+  });
+  assert.equal(skipped[0].reason, 'missing_tags');
+  assert.equal(skipped[0].message, 'missing:artist,album');
+});
+
+test('status breakdown normalizes to canonical skip reason keys', () => {
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  db.prepare('UPDATE scan_state SET skippedReasonsJson = ? WHERE id = 1').run(JSON.stringify({
+    'missing-tags:mismatch:foo': 2,
+    'unsupported-extension': 1,
+    'hidden-path': 1,
+    'broken-symlink': 3
+  }));
+
+  const status = scanner.getStatus();
+  assert.deepEqual(status.skippedReasonsBreakdown, {
+    tag_mismatch: 2,
+    unsupported_extension: 1,
+    hidden_path: 1,
+    unreadable: 3
+  });
 });
