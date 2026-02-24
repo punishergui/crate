@@ -277,3 +277,17 @@ test('status breakdown normalizes to canonical skip reason keys', () => {
     unreadable: 3
   });
 });
+
+test('scanner classifies jpg/png as ignored_non_audio instead of unsupported_extension', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-scan-img-'));
+  const artistDir = path.join(tmp, 'Test Artist');
+  fs.mkdirSync(artistDir, { recursive: true });
+  fs.writeFileSync(path.join(artistDir, 'cover.jpg'), Buffer.from([1, 2, 3]));
+
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  await scanner.runScan(tmp, { recursive: true, maxDepth: 2 });
+
+  const status = scanner.getStatus();
+  assert.equal(status.skippedReasonsBreakdown.ignored_non_audio, 1);
+});
