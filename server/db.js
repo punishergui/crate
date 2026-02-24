@@ -56,7 +56,12 @@ function initDb() {
       lidarrQualityProfileId INTEGER,
       lidarrRootFolderPath TEXT,
       artworkPreferLocal INTEGER NOT NULL DEFAULT 1,
-      artworkAllowRemote INTEGER NOT NULL DEFAULT 0
+      artworkAllowRemote INTEGER NOT NULL DEFAULT 0,
+      artworkPreferEmbedded INTEGER NOT NULL DEFAULT 1,
+      artworkPreferFolder INTEGER NOT NULL DEFAULT 1,
+      artworkCacheEnabled INTEGER NOT NULL DEFAULT 1,
+      artworkDefaultSize INTEGER NOT NULL DEFAULT 512,
+      artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album'
     );
 
     CREATE TABLE IF NOT EXISTS artists (
@@ -295,6 +300,22 @@ function initDb() {
   }
   if (!settingsColumns.some((column) => column.name === 'artworkAllowRemote')) {
     db.exec('ALTER TABLE settings ADD COLUMN artworkAllowRemote INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!settingsColumns.some((column) => column.name === 'artworkPreferEmbedded')) {
+    db.exec('ALTER TABLE settings ADD COLUMN artworkPreferEmbedded INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!settingsColumns.some((column) => column.name === 'artworkPreferFolder')) {
+    db.exec('ALTER TABLE settings ADD COLUMN artworkPreferFolder INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!settingsColumns.some((column) => column.name === 'artworkCacheEnabled')) {
+    db.exec('ALTER TABLE settings ADD COLUMN artworkCacheEnabled INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!settingsColumns.some((column) => column.name === 'artworkDefaultSize')) {
+    db.exec('ALTER TABLE settings ADD COLUMN artworkDefaultSize INTEGER NOT NULL DEFAULT 512');
+  }
+  if (!settingsColumns.some((column) => column.name === 'artworkFolderFilenames')) {
+    db.exec("ALTER TABLE settings ADD COLUMN artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album'");
   }
 
   const scanStateColumns = db.prepare('PRAGMA table_info(scan_state)').all();

@@ -7,6 +7,7 @@ const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.wav']);
 const CANONICAL_SKIP_REASONS = new Set([
   'unreadable',
   'unsupported_extension',
+  'ignored_non_audio',
   'permission_denied',
   'missing_tags',
   'tag_mismatch',
@@ -328,7 +329,12 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onS
     }
 
     if (!isAudioFileName(fullPath)) {
-      onSkip?.(fullPath, `unsupported-extension:${path.extname(fullPath).toLowerCase() || 'none'}`);
+      const ext = path.extname(fullPath).toLowerCase();
+      if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+        onSkip?.(fullPath, `ignored_non_audio:${ext || 'none'}`);
+      } else {
+        onSkip?.(fullPath, `unsupported-extension:${ext || 'none'}`);
+      }
       continue;
     }
 
@@ -545,6 +551,7 @@ class Scanner {
     const normalized = raw.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
     if (CANONICAL_SKIP_REASONS.has(normalized)) return normalized;
 
+    if (normalized.startsWith('ignored_non_audio')) return 'ignored_non_audio';
     if (normalized.startsWith('unsupported_extension')) return 'unsupported_extension';
     if (normalized.startsWith('permission_denied')) return 'permission_denied';
     if (normalized.startsWith('tag_mismatch') || normalized.includes('mismatch')) return 'tag_mismatch';

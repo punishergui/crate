@@ -1,5 +1,6 @@
 import React from 'react';
 import Artwork from '../../components/Artwork';
+import CoverTile from '../../components/CoverTile';
 import { getAlbumArtUrl, getArtistArtUrl } from '../../lib/artwork';
 
 export function SkeletonRows({ rows = 3 }) {
@@ -20,11 +21,9 @@ export function ArtistTile({ artist, subtext }) {
   </article>;
 }
 
-function CoverTile({ item, size, showMetaOnHover }) {
+function CoverStripTile({ item, size, showMetaOnHover }) {
   return <article className="cover-tile" style={{ '--cover-size': size === 'lg' ? '132px' : size === 'md' ? '124px' : '96px' }}>
-    <div className="cover">
-      <Artwork src={getAlbumArtUrl(item, 512)} alt={item.title || 'Album cover'} fallbackSeed={`${item.artistName || ''} ${item.title || ''}`} size="tile" popout popoutTitle={item.title || 'Unknown release'} popoutSubtitle={item.artistName || 'Unknown artist'} />
-    </div>
+    <CoverTile size={size === 'lg' ? 'md' : 'sm'} albumId={item} title={item.title || 'Untitled'} subtitle={item.artistName || 'Unknown artist'} />
     {showMetaOnHover ? <div className="cover-meta"><strong>{item.title || 'Untitled'}</strong> · <span className="muted">{item.artistName || 'Unknown artist'}</span></div> : null}
   </article>;
 }
@@ -39,5 +38,5 @@ export function CoverStrip({ items = [], empty = 'No artwork yet.', size = 'md',
   };
 
   if (!items.length) return <p className="muted">{empty}</p>;
-  return <div className={`cover-strip-wrap ${className}`.trim()}><div className="cover-strip" ref={stripRef} onWheel={onWheel}>{items.map((item, index) => <CoverTile key={`${item.id || item.title || 'cover'}-${index}`} item={item} size={size} showMetaOnHover={showMetaOnHover} />)}</div></div>;
+  return <div className={`cover-strip-wrap ${className}`.trim()}><div className="cover-strip" ref={stripRef} onWheel={onWheel}>{items.map((item, index) => <CoverStripTile key={`${item.id || item.title || 'cover'}-${index}`} item={item} size={size} showMetaOnHover={showMetaOnHover} />)}</div></div>;
 }

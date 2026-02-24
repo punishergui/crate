@@ -34,12 +34,17 @@ function normalizeSettings(row) {
     lidarrQualityProfileId: Number.isInteger(row.lidarrQualityProfileId) ? row.lidarrQualityProfileId : null,
     lidarrRootFolderPath: row.lidarrRootFolderPath || '',
     artworkPreferLocal: Boolean(row.artworkPreferLocal),
-    artworkAllowRemote: Boolean(row.artworkAllowRemote)
+    artworkAllowRemote: Boolean(row.artworkAllowRemote),
+    artworkPreferEmbedded: Boolean(row.artworkPreferEmbedded),
+    artworkPreferFolder: Boolean(row.artworkPreferFolder),
+    artworkCacheEnabled: Boolean(row.artworkCacheEnabled),
+    artworkDefaultSize: row.artworkDefaultSize || 512,
+    artworkFolderFilenames: String(row.artworkFolderFilenames || 'cover,folder,front,album').split(',').map((v) => v.trim()).filter(Boolean)
   };
 }
 
 function getSettings() {
-  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote FROM settings WHERE id = 1').get();
+  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote, artworkPreferEmbedded, artworkPreferFolder, artworkCacheEnabled, artworkDefaultSize, artworkFolderFilenames FROM settings WHERE id = 1').get();
   return normalizeSettings(row);
 }
 
@@ -110,6 +115,27 @@ function validateSettings(payload) {
       throw new Error('artworkAllowRemote must be boolean');
     }
     out.artworkAllowRemote = payload.artworkAllowRemote;
+  }
+
+  if ('artworkPreferEmbedded' in payload) {
+    if (typeof payload.artworkPreferEmbedded !== 'boolean') throw new Error('artworkPreferEmbedded must be boolean');
+    out.artworkPreferEmbedded = payload.artworkPreferEmbedded;
+  }
+  if ('artworkPreferFolder' in payload) {
+    if (typeof payload.artworkPreferFolder !== 'boolean') throw new Error('artworkPreferFolder must be boolean');
+    out.artworkPreferFolder = payload.artworkPreferFolder;
+  }
+  if ('artworkCacheEnabled' in payload) {
+    if (typeof payload.artworkCacheEnabled !== 'boolean') throw new Error('artworkCacheEnabled must be boolean');
+    out.artworkCacheEnabled = payload.artworkCacheEnabled;
+  }
+  if ('artworkDefaultSize' in payload) {
+    if (![256, 512, 1024].includes(Number(payload.artworkDefaultSize))) throw new Error('artworkDefaultSize must be 256|512|1024');
+    out.artworkDefaultSize = Number(payload.artworkDefaultSize);
+  }
+  if ('artworkFolderFilenames' in payload) {
+    if (!Array.isArray(payload.artworkFolderFilenames)) throw new Error('artworkFolderFilenames must be string array');
+    out.artworkFolderFilenames = payload.artworkFolderFilenames.map((v) => String(v).trim()).filter(Boolean);
   }
   return out;
 }
@@ -270,7 +296,12 @@ app.put('/api/settings', async (req, reply) => {
           lidarrQualityProfileId = ?,
           lidarrRootFolderPath = ?,
           artworkPreferLocal = ?,
-          artworkAllowRemote = ?
+          artworkAllowRemote = ?,
+          artworkPreferEmbedded = ?,
+          artworkPreferFolder = ?,
+          artworkCacheEnabled = ?,
+          artworkDefaultSize = ?,
+          artworkFolderFilenames = ?
       WHERE id = 1
     `).run(
       next.accentColor,
@@ -282,9 +313,55 @@ app.put('/api/settings', async (req, reply) => {
       next.lidarrQualityProfileId,
       next.lidarrRootFolderPath || null,
       next.artworkPreferLocal ? 1 : 0,
-      next.artworkAllowRemote ? 1 : 0
+      next.artworkAllowRemote ? 1 : 0,
+      next.artworkPreferEmbedded ? 1 : 0,
+      next.artworkPreferFolder ? 1 : 0,
+      next.artworkCacheEnabled ? 1 : 0,
+      next.artworkDefaultSize,
+      (next.artworkFolderFilenames || []).join(',')
     );
     return getSettings();
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+});
+
+
+app.get('/api/settings/artwork', async () => {
+  const settings = getSettings();
+  return {
+    artworkPreferEmbedded: settings.artworkPreferEmbedded,
+    artworkPreferFolder: settings.artworkPreferFolder,
+    artworkAllowRemote: settings.artworkAllowRemote,
+    artworkCacheEnabled: settings.artworkCacheEnabled,
+    artworkDefaultSize: settings.artworkDefaultSize,
+    artworkFolderFilenames: settings.artworkFolderFilenames
+  };
+});
+
+app.put('/api/settings/artwork', async (req, reply) => {
+  try {
+    const next = validateSettings(req.body || {});
+    db.prepare(`
+      UPDATE settings
+      SET artworkPreferEmbedded = ?, artworkPreferFolder = ?, artworkAllowRemote = ?, artworkCacheEnabled = ?, artworkDefaultSize = ?, artworkFolderFilenames = ?
+      WHERE id = 1
+    `).run(
+      next.artworkPreferEmbedded ? 1 : 0,
+      next.artworkPreferFolder ? 1 : 0,
+      next.artworkAllowRemote ? 1 : 0,
+      next.artworkCacheEnabled ? 1 : 0,
+      next.artworkDefaultSize,
+      (next.artworkFolderFilenames || []).join(',')
+    );
+    return {
+      artworkPreferEmbedded: next.artworkPreferEmbedded,
+      artworkPreferFolder: next.artworkPreferFolder,
+      artworkAllowRemote: next.artworkAllowRemote,
+      artworkCacheEnabled: next.artworkCacheEnabled,
+      artworkDefaultSize: next.artworkDefaultSize,
+      artworkFolderFilenames: next.artworkFolderFilenames
+    };
   } catch (error) {
     return reply.code(400).send({ error: error.message });
   }
@@ -858,7 +935,6 @@ app.get('/api/artwork/album/:albumId', async (req, reply) => {
 
   const diag = await artwork.diagnoseAlbum(albumId, { size });
   if (!diag) return reply.code(404).send({ error: 'Album not found', albumId });
-  if (!diag.resolved) return reply.code(404).send({ error: 'Artwork not found', albumId, tried: diag.tried });
 
   const stat = fs.statSync(diag.filePath);
   const etag = `W/"${stat.size}-${Number(stat.mtimeMs)}"`;
@@ -905,7 +981,7 @@ app.get('/api/artwork/artist/:artistId', async (req, reply) => {
     return reply.send(fs.createReadStream(diag.filePath));
   }
   if (diag.redirectAlbumId) return reply.redirect(`/api/artwork/album/${diag.redirectAlbumId}?size=${size}`);
-  return reply.code(404).send({ error: 'Artwork not found', artistId, tried: diag.tried });
+  return reply.code(404).send({ error: 'Artist not found', artistId });
 });
 
 app.get('/api/artwork/artist/:artistId/diagnose', async (req, reply) => {
@@ -935,6 +1011,11 @@ app.post('/api/artwork/refresh-all', async () => {
 });
 
 app.get('/api/artwork/status', async () => artwork.getJobCounts());
+
+app.post('/api/artwork/cache/clear', async () => {
+  await artwork.clearCache();
+  return { ok: true };
+});
 
 app.get('/api/dashboard', async () => {
   const stats = getStats();

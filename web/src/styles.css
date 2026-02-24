@@ -111,3 +111,8 @@ h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
 .media-tile-art { grid-template-columns: 1fr; align-items: start; }
 .media-tile-art > div { min-width: 0; }
 .cover-strip { overflow-x: auto; flex-wrap: nowrap; padding-bottom: .2rem; }
+
+.cover-tile-v2 { width: var(--coverSize, 140px); }
+.cover-tile-v2 .artwork { width: 100% !important; border-radius: 0; }
+.cover-tile-v2__overlay { display: grid; gap: .2rem; align-content: end; width: 100%; height: 100%; padding: .45rem; background: linear-gradient(180deg, transparent, rgb(0 0 0 / .72)); font-size: .7rem; }
+.cover-tile-v2__overlay span { color: var(--muted); }

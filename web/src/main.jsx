@@ -4,6 +4,7 @@ import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router
 import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
 import Artwork from './ui/components/Artwork';
+import CoverTile from './ui/components/CoverTile';
 import {
   getAlbumArtDiagnoseUrl,
   getAlbumArtRescanUrl,
@@ -146,7 +147,7 @@ function Library() {
 
   return <section className="page-stack"><div className="split-head"><h1>Library</h1><div className="inline-actions"><button className={`btn ${mode === 'art-grid' ? 'btn-accent' : ''}`} onClick={() => setMode('art-grid')}>Art Grid</button><button className={`btn ${mode === 'compact-list' ? 'btn-accent' : ''}`} onClick={() => setMode('compact-list')}>Compact List</button></div></div><input value={q} onChange={(e) => setQ(e.target.value)} className="input" placeholder="Filter by artist or album" />
     <div className={mode === 'art-grid' ? 'album-grid' : 'simple-list'}>{list.items.map((item) => mode === 'art-grid'
-      ? <article key={item.id} className="album-grid-tile"><Artwork src={getAlbumArtUrl(item, 512)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="tile-lg" badge={item.artworkSource || ''} /><strong>{item.title}</strong><span className="muted">{item.artistName}</span><ArtworkInspector title={item.title} diagnoseUrl={getAlbumArtDiagnoseUrl(item.id)} rescanUrl={getAlbumArtRescanUrl(item.id)} />{item.artistId ? <ArtworkInspector title={item.artistName || 'Artist'} diagnoseUrl={getArtistArtDiagnoseUrl(item.artistId)} rescanUrl={getArtistArtRescanUrl(item.artistId)} /> : null}</article>
+      ? <article key={item.id} className="album-grid-tile"><CoverTile size="md" albumId={item} title={item.title} subtitle={item.artistName} /><strong>{item.title}</strong><span className="muted">{item.artistName}</span><ArtworkInspector title={item.title} diagnoseUrl={getAlbumArtDiagnoseUrl(item.id)} rescanUrl={getAlbumArtRescanUrl(item.id)} />{item.artistId ? <ArtworkInspector title={item.artistName || 'Artist'} diagnoseUrl={getArtistArtDiagnoseUrl(item.artistId)} rescanUrl={getArtistArtRescanUrl(item.artistId)} /> : null}</article>
       : <article key={item.id} className="list-item"><div className="media-row"><Artwork src={getAlbumArtUrl(item, 256)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" popout popoutTitle={item.title} popoutSubtitle={item.artistName} /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
 }
 
@@ -186,24 +187,32 @@ function ArtworkInspector({ title, diagnoseUrl, rescanUrl, onDone }) {
 }
 
 function ArtworkSettingsPage() {
-  const [settings, setSettings] = React.useState({ artworkPreferLocal: true, artworkAllowRemote: false });
+  const [settings, setSettings] = React.useState({ artworkPreferEmbedded: true, artworkPreferFolder: true, artworkAllowRemote: false, artworkCacheEnabled: true, artworkDefaultSize: 512, artworkFolderFilenames: ['cover', 'folder', 'front', 'album'] });
   const [status, setStatus] = React.useState('');
-  React.useEffect(() => { api.get('/api/settings').then((payload) => setSettings({ artworkPreferLocal: !!payload.artworkPreferLocal, artworkAllowRemote: !!payload.artworkAllowRemote })); }, []);
+  React.useEffect(() => { api.get('/api/settings/artwork').then(setSettings).catch(() => null); }, []);
   const patch = async (next) => {
     const merged = { ...settings, ...next };
     setSettings(merged);
-    await request('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) }).catch(() => null);
+    const saved = await request('/api/settings/artwork', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) }).catch((error) => ({ error: error.message }));
+    if (saved?.error) setStatus(saved.error);
+  };
+  const clearCache = async () => {
+    await api.post('/api/artwork/cache/clear').catch(() => null);
+    setStatus('Artwork cache cleared.');
   };
   const rescanAll = async () => {
     const payload = await api.post('/api/artwork/refresh-all').catch((error) => ({ error: error.message }));
     setStatus(payload.error ? payload.error : `Queued ${payload.queued || 0} albums for artwork refresh.`);
   };
   return <section className="page-stack"><h1>Artwork</h1><div className="app-card"><div className="filters-row">
-    <label>Prefer folder artwork<select value={settings.artworkPreferLocal ? 'on' : 'off'} onChange={(e) => patch({ artworkPreferLocal: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
-    <label>Cache artwork locally<select value="on" disabled><option value="on">On</option></select></label>
-    <label>Allow remote artwork<select value={settings.artworkAllowRemote ? 'on' : 'off'} onChange={(e) => patch({ artworkAllowRemote: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
-    <button className="btn btn-accent" onClick={rescanAll}>Rescan artwork now</button>
-  </div>{status ? <p className="muted">{status}</p> : null}</div></section>;
+    <label>Prefer embedded art<select value={settings.artworkPreferEmbedded ? 'on' : 'off'} onChange={(e) => patch({ artworkPreferEmbedded: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Prefer folder art<select value={settings.artworkPreferFolder ? 'on' : 'off'} onChange={(e) => patch({ artworkPreferFolder: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Allow remote fallback<select value={settings.artworkAllowRemote ? 'on' : 'off'} onChange={(e) => patch({ artworkAllowRemote: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Cache artwork thumbnails<select value={settings.artworkCacheEnabled ? 'on' : 'off'} onChange={(e) => patch({ artworkCacheEnabled: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Artwork quality<select value={settings.artworkDefaultSize} onChange={(e) => patch({ artworkDefaultSize: Number(e.target.value) })}><option value={256}>256</option><option value={512}>512</option><option value={1024}>1024</option></select></label>
+    <label>Folder names<input className="input" value={(settings.artworkFolderFilenames || []).join(', ')} onChange={(e) => patch({ artworkFolderFilenames: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })} /></label>
+  </div><div className="inline-actions"><button className="btn" onClick={clearCache}>Clear artwork cache</button><button className="btn btn-accent" onClick={rescanAll}>Rescan artwork now</button></div>
+  <div className="theme-live-preview"><strong>Preview</strong><CoverTile size="sm" title="Album preview" subtitle="Artist preview" albumId={1} /></div>{status ? <p className="muted">{status}</p> : null}</div></section>;
 }
 
 function ThemesSettingsPage() {
