@@ -1,116 +1,81 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import Card from '../components/Card';
-import { widgetMap, widgetRegistry } from './widgets';
+import { concertsWidget } from './widgets/concerts';
+import { discoverWidget } from './widgets/discover';
+import { downloadsWidget } from './widgets/downloads';
+import { missingAlbumsWidget } from './widgets/missingAlbums';
+import { newReleasesWidget } from './widgets/newReleases';
+import { recentActivityWidget } from './widgets/recentActivity';
+import { upcomingReleasesWidget } from './widgets/upcomingReleases';
+import { CoverStrip } from './widgets/helpers';
 import './dashboard.css';
 
-const LAYOUT_KEY = 'crate.dashboard.layout.v1';
-const sizeToSpan = { sm: 3, md: 6, lg: 12 };
-
-function defaultLayout() {
-  return widgetRegistry.map((widget, index) => ({ id: widget.id, size: widget.defaultSize || 'md', visible: widget.defaultVisible !== false, order: Number.isInteger(widget.defaultOrder) ? widget.defaultOrder : index }));
-}
-
-function sanitizeLayout(raw) {
-  if (!Array.isArray(raw)) return defaultLayout();
-  const valid = raw
-    .filter((item) => item && widgetMap[item.id])
-    .map((item, index) => ({
-      id: item.id,
-      size: ['sm', 'md', 'lg'].includes(item.size) ? item.size : widgetMap[item.id].defaultSize,
-      visible: item.visible !== false,
-      order: Number.isFinite(item.order) ? item.order : index
-    }));
-  const missing = widgetRegistry.filter((widget) => !valid.find((item) => item.id === widget.id))
-    .map((widget) => ({ id: widget.id, size: widget.defaultSize, visible: true, order: widget.defaultOrder }));
-  return [...valid, ...missing].sort((a, b) => a.order - b.order).map((item, order) => ({ ...item, order }));
+function useScanStatus() {
+  const [scanStatus, setScanStatus] = React.useState(null);
+  React.useEffect(() => {
+    let timer;
+    let closed = false;
+    const tick = async () => {
+      const payload = await fetch('/api/scan/status').then((r) => r.json()).catch(() => null);
+      if (closed) return;
+      setScanStatus(payload);
+      timer = window.setTimeout(tick, payload?.status === 'running' ? 1200 : 10000);
+    };
+    tick();
+    return () => { closed = true; clearTimeout(timer); };
+  }, []);
+  return [scanStatus, setScanStatus];
 }
 
 export default function DashboardPage() {
   const [data, setData] = React.useState(null);
-  const [isEditing, setIsEditing] = React.useState(false);
-  const [dragId, setDragId] = React.useState('');
-  const [layout, setLayout] = React.useState(() => {
-    const stored = localStorage.getItem(LAYOUT_KEY);
-    if (!stored) return defaultLayout();
-    try {
-      return sanitizeLayout(JSON.parse(stored));
-    } catch {
-      return defaultLayout();
-    }
-  });
+  const [scanStatus, setScanStatus] = useScanStatus();
 
   React.useEffect(() => { fetch('/api/dashboard').then((r) => r.json()).then(setData).catch(() => setData(null)); }, []);
 
-  React.useEffect(() => {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
-  }, [layout]);
-
-  const ordered = [...layout].sort((a, b) => a.order - b.order);
-  const visibleItems = ordered.filter((item) => item.visible);
-  const hiddenItems = ordered.filter((item) => !item.visible);
-
-  const updateItem = (id, updater) => setLayout((prev) => prev.map((item) => item.id === id ? updater(item) : item));
-
-  const moveItem = (fromId, toId) => {
-    if (!fromId || !toId || fromId === toId) return;
-    setLayout((prev) => {
-      const sorted = [...prev].sort((a, b) => a.order - b.order);
-      const fromIndex = sorted.findIndex((item) => item.id === fromId);
-      const toIndex = sorted.findIndex((item) => item.id === toId);
-      if (fromIndex < 0 || toIndex < 0) return prev;
-      const [moved] = sorted.splice(fromIndex, 1);
-      sorted.splice(toIndex, 0, moved);
-      return sorted.map((item, order) => ({ ...item, order }));
-    });
+  const startScan = async () => {
+    const payload = await fetch('/api/scan/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((r) => r.json()).catch(() => null);
+    if (payload?.status) setScanStatus(payload.status);
   };
 
-  const resetLayout = () => setLayout(defaultLayout());
+  const recentlyAdded = (data?.recent || []).slice(0, 16);
+  const progress = Math.max(0, Math.min(100, scanStatus?.progressPct || 0));
 
-  return <section className="page-stack">
+  return <section className="page-stack dashboard-shell">
     <div className="split-head">
       <h1>Dashboard</h1>
-      <div className="inline-actions">
-        <button className="btn" onClick={() => setIsEditing((v) => !v)}>{isEditing ? 'Done' : 'Customize'}</button>
-        {isEditing ? <button className="btn" onClick={resetLayout}>Reset Layout</button> : null}
-      </div>
     </div>
 
-    {isEditing && hiddenItems.length ? <Card title="Hidden Widgets" icon="🙈" className="hidden-card">
-      <div className="chip-row">
-        {hiddenItems.map((item) => <button key={item.id} className="chip" onClick={() => updateItem(item.id, (current) => ({ ...current, visible: true }))}>Show {widgetMap[item.id].title}</button>)}
-      </div>
-    </Card> : null}
+    <div className="dashboard-grid dashboard-grid--fixed">
+      <div className="widget-slot span-7">{(() => {
+        const body = <CoverStrip items={recentlyAdded} empty="Scan your library to populate this wall." size="lg" showMetaOnHover className="cover-strip--hero" />;
+        return <Card title="Recently Added" icon="🧱" footer={<Link to="/library" className="card-link">View all</Link>}>{body}</Card>;
+      })()}</div>
 
-    <div className={`dashboard-grid ${isEditing ? 'editing' : ''}`}>
-      {visibleItems.map((layoutItem) => {
-        const widget = widgetMap[layoutItem.id];
-        const rendered = widget.render({ data, layout: layoutItem });
-        return <div
-          key={widget.id}
-          className={`widget-slot span-${sizeToSpan[layoutItem.size]}`}
-          draggable={isEditing}
-          onDragStart={() => setDragId(widget.id)}
-          onDragOver={(event) => { if (isEditing) event.preventDefault(); }}
-          onDrop={() => { if (isEditing) moveItem(dragId, widget.id); setDragId(''); }}
-        >
-          <Card
-            title={widget.title}
-            icon={widget.icon}
-            footer={rendered.footer}
-            dragProps={isEditing ? { onMouseDown: () => {}, tabIndex: -1 } : null}
-            right={isEditing ? <div className="edit-controls">
-              <select value={layoutItem.size} onChange={(event) => updateItem(widget.id, (current) => ({ ...current, size: event.target.value }))}>
-                <option value="sm">Small</option>
-                <option value="md">Medium</option>
-                <option value="lg">Large</option>
-              </select>
-              <button className="icon-btn" onClick={() => updateItem(widget.id, (current) => ({ ...current, visible: false }))} aria-label={`Hide ${widget.title}`}>✕</button>
-            </div> : null}
-          >
-            {rendered.body}
-          </Card>
-        </div>;
-      })}
+      <div className="widget-slot span-5">
+        <Card title="Scan Control" icon="⚡" footer={<Link to="/scan-report" className="card-link">View Scan Report</Link>}>
+          <div className="scan-panel">
+            <div className="status-pill"><span className={`status-dot ${scanStatus?.status === 'running' ? 'running' : ''}`} /><span>{scanStatus?.status || 'idle'}</span></div>
+            <button className="btn btn-accent" onClick={startScan}>Start Scan</button>
+            <p className="muted">Last Scan: {scanStatus?.finishedAt ? new Date(scanStatus.finishedAt).toLocaleString() : '—'}</p>
+            {scanStatus?.status === 'running' ? <div className="progress"><span style={{ width: `${progress}%` }} /></div> : null}
+            <p className="muted">Skipped: {scanStatus?.skippedTotal ?? 0} · Files: {scanStatus?.scannedFiles ?? 0}</p>
+          </div>
+        </Card>
+      </div>
+
+      <div className="widget-slot span-6"><Card title={newReleasesWidget.title} icon={newReleasesWidget.icon} footer={newReleasesWidget.render({ data }).footer}>{newReleasesWidget.render({ data }).body}</Card></div>
+      <div className="widget-slot span-6"><Card title={discoverWidget.title} icon={discoverWidget.icon} footer={discoverWidget.render({ data }).footer}>{discoverWidget.render({ data }).body}</Card></div>
+
+      <div className="widget-slot span-4"><Card title={concertsWidget.title} icon={concertsWidget.icon} footer={concertsWidget.render({ data }).footer}>{concertsWidget.render({ data }).body}</Card></div>
+      <div className="widget-slot span-4"><Card title={downloadsWidget.title} icon={downloadsWidget.icon} footer={downloadsWidget.render({ data }).footer}>{downloadsWidget.render({ data }).body}</Card></div>
+      <div className="widget-slot span-4"><Card title={missingAlbumsWidget.title} icon={missingAlbumsWidget.icon} footer={missingAlbumsWidget.render({ data }).footer}>{missingAlbumsWidget.render({ data }).body}</Card></div>
+
+      <div className="widget-slot span-6"><Card title="Your Library" icon="📚" footer={<Link to="/library" className="card-link">View all</Link>}><CoverStrip items={(data?.recent || []).slice(0, 12)} empty="Library gallery appears after scans." size="md" showMetaOnHover /></Card></div>
+      <div className="widget-slot span-6"><Card title={upcomingReleasesWidget.title} icon={upcomingReleasesWidget.icon} footer={upcomingReleasesWidget.render({ data }).footer}>{upcomingReleasesWidget.render({ data }).body}</Card></div>
+
+      <div className="widget-slot span-12"><Card title={recentActivityWidget.title} icon={recentActivityWidget.icon} footer={recentActivityWidget.render({ data }).footer}>{recentActivityWidget.render({ data }).body}</Card></div>
     </div>
   </section>;
 }

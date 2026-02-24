@@ -1,7 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import Artwork from '../../components/Artwork';
-import { getAlbumArtUrl } from '../../lib/artwork';
+import { CoverStrip } from './helpers';
 
 const fallback = {
   'Apr 19': [{ title: 'In Stasis', artistName: 'Monuments' }, { title: 'Gnosis', artistName: 'Monuments' }],
@@ -17,8 +16,9 @@ export const upcomingReleasesWidget = {
   defaultVisible: true,
   render: (ctx) => {
     const grouped = ctx?.data?.upcomingByDate || fallback;
+    const flattened = Object.entries(grouped).flatMap(([date, items]) => (items || []).map((item) => ({ ...item, title: `${item.title || 'Untitled'} · ${date}` })));
     return {
-      body: <div className="date-groups scroll-list">{Object.entries(grouped).slice(0, 3).map(([date, items]) => <div key={date} className="date-row"><span className="muted">{date}</span><div className="cover-strip">{(items || []).slice(0, 5).map((album, i) => <Artwork key={`${date}-${i}`} src={getAlbumArtUrl(album)} alt={album.title || 'Upcoming album'} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size="lg" />)}</div></div>)}</div>,
+      body: <CoverStrip items={flattened.slice(0, 12)} empty="No upcoming schedule." size="md" showMetaOnHover />,
       footer: <Link to="/releases" className="card-link">View schedule</Link>
     };
   }

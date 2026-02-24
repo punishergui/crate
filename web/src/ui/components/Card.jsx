@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function Card({ title, icon, right, footer, children, className = '', dragProps, menuLabel = 'Widget menu' }) {
   return <section className={`card app-card ${className}`.trim()}>
-    <header className="card__header card-head">
+    <header className="card__head card-head">
       <div className="card-title-wrap">
         <span className="card-icon" aria-hidden="true">{icon}</span>
         <h2>{title}</h2>
@@ -14,6 +14,6 @@ export default function Card({ title, icon, right, footer, children, className =
       </div>
     </header>
     <div className="card__body card-body">{children}</div>
-    {footer ? <footer className="card__footer card-footer">{footer}</footer> : null}
+    {footer ? <footer className="card__foot card-footer">{footer}</footer> : null}
   </section>;
 }
