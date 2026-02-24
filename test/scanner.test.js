@@ -10,7 +10,7 @@ const { Scanner, collectArtistTracks, parseMp3Id3v1 } = require('../server/scann
 function createTestDb() {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE settings (id INTEGER PRIMARY KEY, lastScanAt TEXT);
+    CREATE TABLE settings (id INTEGER PRIMARY KEY, lastScanAt TEXT, scanMaxDepth INTEGER DEFAULT 4, scanIgnoreHiddenPaths INTEGER DEFAULT 1, scanGroupByFolder INTEGER DEFAULT 1, scanTreatArtistRootLooseTracksAsSingles INTEGER DEFAULT 1);
     INSERT INTO settings(id, lastScanAt) VALUES(1, NULL);
     CREATE TABLE scan_state (
       id INTEGER PRIMARY KEY,
@@ -39,6 +39,8 @@ function createTestDb() {
       artistId INTEGER NOT NULL,
       title TEXT NOT NULL,
       path TEXT NOT NULL UNIQUE,
+      pathDir TEXT,
+      albumKey TEXT,
       firstSeen TEXT NOT NULL,
       lastSeen TEXT NOT NULL,
       lastFileMtime INTEGER,
@@ -175,7 +177,7 @@ test('scanner dedupes duplicate hardlinks and records skipped reason breakdown',
   assert.equal(status.skippedReasonsBreakdown.unreadable, 1);
 });
 
-test('scanner groups same tagged album across different folders into one album', async () => {
+test('scanner groups albums by folder path even when tags match', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-scan-merge-'));
   const artistDir = path.join(tmp, 'New Found Glory');
   const albumDirA = path.join(artistDir, 'Waiting (1998)');
@@ -201,9 +203,9 @@ test('scanner groups same tagged album across different folders into one album',
   await scanner.runScan(tmp, { recursive: true, maxDepth: 4 });
 
   const albums = db.prepare('SELECT title, trackCount FROM albums WHERE deleted = 0').all();
-  assert.equal(albums.length, 1);
+  assert.equal(albums.length, 2);
   assert.equal(albums[0].title, 'Waiting');
-  assert.equal(albums[0].trackCount, 2);
+  assert.equal(albums[1].title, 'Waiting');
 });
 
 
@@ -290,4 +292,28 @@ test('scanner classifies jpg/png as ignored_non_audio instead of unsupported_ext
 
   const status = scanner.getStatus();
   assert.equal(status.skippedReasonsBreakdown.ignored_non_audio, 1);
+});
+
+
+test('scanner falls back to artist when album_artist tag is missing', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-scan-fallback-'));
+  const artistDir = path.join(tmp, 'New Found Glory');
+  const albumDir = path.join(artistDir, 'Catalyst (2004)');
+  fs.mkdirSync(albumDir, { recursive: true });
+
+  writeMp3WithId3v1(path.join(albumDir, '01-all-downhill-from-here.mp3'), {
+    title: 'All Downhill from Here',
+    artist: 'New Found Glory',
+    album: 'Catalyst',
+    year: '2004'
+  });
+
+  const db = createTestDb();
+  const scanner = new Scanner(db);
+  await scanner.runScan(tmp, { recursive: true, maxDepth: 4 });
+
+  const album = db.prepare('SELECT title FROM albums WHERE deleted = 0').get();
+  assert.equal(album.title, 'Catalyst');
+  const skipped = db.prepare("SELECT COUNT(*) AS c FROM scan_skipped WHERE reason = 'missing_tags'").get().c;
+  assert.equal(skipped, 0);
 });

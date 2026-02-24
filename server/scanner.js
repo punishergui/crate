@@ -47,7 +47,7 @@ function buildFsErrorDetails(error) {
   };
 }
 
-function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath) {
+function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath, options = {}) {
   if (depth > maxDepth) return results;
 
   let entries = [];
@@ -67,15 +67,19 @@ function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath
     onVisitPath?.(fullPath);
 
     if (entry.isDirectory()) {
-      if (entry.name === '.crate' || isHiddenName(entry.name)) {
-        onSkip?.(fullPath, 'hidden-path');
+      if (entry.name === '.crate') {
+        onSkip?.(fullPath, 'hidden_path');
+        continue;
+      }
+      if (options.ignoreHiddenPaths && isHiddenName(entry.name)) {
+        onSkip?.(fullPath, 'hidden_path');
         continue;
       }
       if (depth + 1 > maxDepth) {
         onSkip?.(fullPath, `depth-exceeded:${maxDepth}`);
         continue;
       }
-      walkDir(fullPath, maxDepth, depth + 1, results, onSkip, onVisitPath);
+      walkDir(fullPath, maxDepth, depth + 1, results, onSkip, onVisitPath, options);
       continue;
     }
 
@@ -126,10 +130,13 @@ function deriveAlbumTitleFromFolderName(folderName) {
   return original;
 }
 
-function createVirtualAlbumPath(artistPath, albumTitle) {
-  const slug = normalizeAlbumKey(albumTitle) || 'unknown-album';
-  const hash = crypto.createHash('sha1').update(albumTitle).digest('hex').slice(0, 8);
-  return path.join(artistPath, '.crate', `${slug}-${hash}`);
+function normalizeAlbumDirPath(value) {
+  return String(value || '').replace(/\\/g, '/').replace(/\/+$|^\/$/g, '').toLowerCase();
+}
+
+function createAlbumKey(artistName, albumDirPath) {
+  const keySrc = `${normalizeCompareValue(artistName)}::${normalizeAlbumDirPath(albumDirPath)}`;
+  return crypto.createHash('sha1').update(keySrc).digest('hex');
 }
 
 function parseAlbumFromFilename(filePath, artistName) {
@@ -290,9 +297,9 @@ function hashFileFirstChunk(filePath) {
   }
 }
 
-function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onSkip, onVisitPath) {
+function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignoreHiddenPaths = true }, onSkip, onVisitPath) {
   const walkMaxDepth = recursive ? maxDepth : 0;
-  const allPaths = walkDir(artistPath, walkMaxDepth, 0, [], onSkip, onVisitPath);
+  const allPaths = walkDir(artistPath, walkMaxDepth, 0, [], onSkip, onVisitPath, { ignoreHiddenPaths });
   const out = [];
 
   for (const fullPath of allPaths) {
@@ -340,6 +347,7 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3 }, onS
 
     out.push({
       path: fullPath,
+      directory: path.dirname(fullPath),
       ext: path.extname(fullPath).toLowerCase().slice(1),
       mtime: stat.mtimeMs,
       size: stat.size,
@@ -374,8 +382,11 @@ class Scanner {
     this.cancelRequested = false;
     const scanOptions = {
       recursive: options.recursive !== undefined ? Boolean(options.recursive) : true,
-      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 3,
-      artistId: Number.isInteger(options.artistId) ? options.artistId : null
+      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 4,
+      artistId: Number.isInteger(options.artistId) ? options.artistId : null,
+      ignoreHiddenPaths: options.ignoreHiddenPaths !== undefined ? Boolean(options.ignoreHiddenPaths) : true,
+      groupByFolder: options.groupByFolder !== undefined ? Boolean(options.groupByFolder) : true,
+      treatArtistRootLooseTracksAsSingles: options.treatArtistRootLooseTracksAsSingles !== undefined ? Boolean(options.treatArtistRootLooseTracksAsSingles) : true
     };
 
     setImmediate(() => this.runScan(libraryPath, scanOptions).catch((error) => {
@@ -412,22 +423,24 @@ class Scanner {
     return res.lastInsertRowid;
   }
 
-  upsertAlbum({ artistId, title, albumPath, seenAt, formats, trackCount, lastFileMtime }) {
+  upsertAlbum({ artistId, title, albumPath, pathDir, albumKey, seenAt, formats, trackCount, lastFileMtime }) {
     const formatsJson = JSON.stringify(Array.from(formats).sort());
-    const existing = this.db.prepare('SELECT id FROM albums WHERE path = ?').get(albumPath);
+    const existing = (albumKey
+      ? this.db.prepare('SELECT id FROM albums WHERE albumKey = ?').get(albumKey)
+      : null) || this.db.prepare('SELECT id FROM albums WHERE path = ?').get(albumPath);
     if (existing) {
       this.db.prepare(`
         UPDATE albums
-        SET artistId = ?, title = ?, lastSeen = ?, lastFileMtime = ?, formatsJson = ?, trackCount = ?, deleted = 0
+        SET artistId = ?, title = ?, path = ?, pathDir = ?, albumKey = ?, lastSeen = ?, lastFileMtime = ?, formatsJson = ?, trackCount = ?, deleted = 0
         WHERE id = ?
-      `).run(artistId, title, seenAt, lastFileMtime, formatsJson, trackCount, existing.id);
+      `).run(artistId, title, albumPath, pathDir, albumKey, seenAt, lastFileMtime, formatsJson, trackCount, existing.id);
       this.db.prepare(`INSERT INTO jobs (type, payloadJson, status, createdAt) VALUES (?, ?, 'queued', ?)`).run('art_fetch_album', JSON.stringify({ albumId: existing.id }), Date.now());
       return existing.id;
     }
     const res = this.db.prepare(`
-      INSERT INTO albums(artistId, title, path, firstSeen, lastSeen, lastFileMtime, formatsJson, trackCount, deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(artistId, title, albumPath, seenAt, seenAt, lastFileMtime, formatsJson, trackCount);
+      INSERT INTO albums(artistId, title, path, pathDir, albumKey, firstSeen, lastSeen, lastFileMtime, formatsJson, trackCount, deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(artistId, title, albumPath, pathDir, albumKey, seenAt, seenAt, lastFileMtime, formatsJson, trackCount);
     this.db.prepare(`INSERT INTO jobs (type, payloadJson, status, createdAt) VALUES (?, ?, 'queued', ?)`).run('art_fetch_album', JSON.stringify({ albumId: Number(res.lastInsertRowid) }), Date.now());
     return res.lastInsertRowid;
   }
@@ -449,7 +462,7 @@ class Scanner {
     this.db.prepare('UPDATE tracks SET deleted = 1 WHERE albumId = ? AND lastSeen < ?').run(albumId, seenAt);
   }
 
-  syncAlbum({ artistId, title, albumPath, tracks, seenAt }) {
+  syncAlbum({ artistId, title, albumPath, pathDir, albumKey, tracks, seenAt }) {
     if (tracks.length === 0) return null;
 
     const formats = new Set();
@@ -463,6 +476,8 @@ class Scanner {
       artistId,
       title,
       albumPath,
+      pathDir,
+      albumKey,
       seenAt,
       formats,
       trackCount: tracks.length,
@@ -686,7 +701,11 @@ class Scanner {
         const skipped = [];
         const artistTracks = collectArtistTracks(
           artistPath,
-          { recursive: scanOptions.recursive !== false, maxDepth: scanOptions.maxDepth || 3 },
+          {
+            recursive: scanOptions.recursive !== false,
+            maxDepth: scanOptions.maxDepth || 4,
+            ignoreHiddenPaths: scanOptions.ignoreHiddenPaths !== false
+          },
           (filePath, reason) => {
             this.pushSkip(skipped, filePath, reason);
           },
@@ -711,17 +730,13 @@ class Scanner {
             continue;
           }
 
-          const albumName = normalizeTagValue(metadata.tagInfo?.album);
-          const albumArtist = normalizeTagValue(metadata.tagInfo?.albumArtist);
+          const albumName = normalizeTagValue(metadata.tagInfo?.album) || deriveAlbumTitleFromFolderName(path.basename(track.directory));
           const artist = normalizeTagValue(metadata.tagInfo?.artist);
-          const missing = [];
-          if (!artist) missing.push('artist');
-          if (!albumName) missing.push('album');
-          if (!albumArtist) missing.push('album_artist');
-          if (missing.length) {
+          const albumArtist = normalizeTagValue(metadata.tagInfo?.albumArtist) || artist;
+          if (!albumName || !artist) {
             this.pushSkip(skipped, track.path, {
               reason: 'missing_tags',
-              message: `missing:${missing.join(',')}`,
+              message: `missing:${!albumName ? 'album' : 'artist'}`,
               detailsJson: { detectedTags: metadata.tagInfo || null }
             });
             continue;
@@ -748,22 +763,46 @@ class Scanner {
           }
           seenDedupKeys.add(dedupeKey);
 
-          const groupKey = `${albumArtist}::${albumName}`;
-          if (!albumGroups.has(groupKey)) {
-            albumGroups.set(groupKey, {
-              title: albumName,
-              albumPath: createVirtualAlbumPath(artistPath, `${albumArtist}-${albumName}`),
-              tracks: []
+          const trackDir = track.directory;
+          const looseAtRoot = trackDir === artistPath;
+          const groupDir = (scanOptions.groupByFolder === false)
+            ? artistPath
+            : (looseAtRoot && scanOptions.treatArtistRootLooseTracksAsSingles !== false
+              ? path.join(artistPath, '.crate', 'loose-tracks')
+              : trackDir);
+          const albumKey = createAlbumKey(artistName, groupDir);
+          if (!albumGroups.has(albumKey)) {
+            albumGroups.set(albumKey, {
+              title: looseAtRoot && scanOptions.treatArtistRootLooseTracksAsSingles !== false ? 'Loose Tracks' : albumName,
+              albumPath: groupDir,
+              pathDir: groupDir,
+              albumKey,
+              tracks: [],
+              formats: new Set(),
+              sampleTags: []
             });
           }
-          albumGroups.get(groupKey).tracks.push(track);
+          const candidate = albumGroups.get(albumKey);
+          candidate.tracks.push(track);
+          candidate.formats.add(track.ext);
+          if (candidate.sampleTags.length < 3) {
+            candidate.sampleTags.push(metadata.tagInfo || null);
+          }
         }
 
         if (this.cancelRequested) break;
 
         for (const albumCandidate of albumGroups.values()) {
           this.updateScanProgress({ scannedFiles, scannedAlbums, scannedArtists: artistsSeen.size, skippedFiles, skippedReasons, currentPath: albumCandidate.albumPath });
-          const trackCount = this.syncAlbum({ artistId, title: albumCandidate.title, albumPath: albumCandidate.albumPath, tracks: albumCandidate.tracks, seenAt });
+          const trackCount = this.syncAlbum({
+            artistId,
+            title: albumCandidate.title,
+            albumPath: albumCandidate.albumPath,
+            pathDir: albumCandidate.pathDir,
+            albumKey: albumCandidate.albumKey,
+            tracks: albumCandidate.tracks,
+            seenAt
+          });
           if (!trackCount) continue;
           scannedAlbums += 1;
           scannedFiles += trackCount;

@@ -39,12 +39,16 @@ function normalizeSettings(row) {
     artworkPreferFolder: Boolean(row.artworkPreferFolder),
     artworkCacheEnabled: Boolean(row.artworkCacheEnabled),
     artworkDefaultSize: row.artworkDefaultSize || 512,
-    artworkFolderFilenames: String(row.artworkFolderFilenames || 'cover,folder,front,album').split(',').map((v) => v.trim()).filter(Boolean)
+    artworkFolderFilenames: String(row.artworkFolderFilenames || 'cover,folder,front,album').split(',').map((v) => v.trim()).filter(Boolean),
+    scanMaxDepth: Number.isInteger(row.scanMaxDepth) ? row.scanMaxDepth : 4,
+    scanIgnoreHiddenPaths: Boolean(row.scanIgnoreHiddenPaths),
+    scanGroupByFolder: Boolean(row.scanGroupByFolder),
+    scanTreatArtistRootLooseTracksAsSingles: Boolean(row.scanTreatArtistRootLooseTracksAsSingles)
   };
 }
 
 function getSettings() {
-  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote, artworkPreferEmbedded, artworkPreferFolder, artworkCacheEnabled, artworkDefaultSize, artworkFolderFilenames FROM settings WHERE id = 1').get();
+  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote, artworkPreferEmbedded, artworkPreferFolder, artworkCacheEnabled, artworkDefaultSize, artworkFolderFilenames, scanMaxDepth, scanIgnoreHiddenPaths, scanGroupByFolder, scanTreatArtistRootLooseTracksAsSingles FROM settings WHERE id = 1').get();
   return normalizeSettings(row);
 }
 
@@ -136,6 +140,25 @@ function validateSettings(payload) {
   if ('artworkFolderFilenames' in payload) {
     if (!Array.isArray(payload.artworkFolderFilenames)) throw new Error('artworkFolderFilenames must be string array');
     out.artworkFolderFilenames = payload.artworkFolderFilenames.map((v) => String(v).trim()).filter(Boolean);
+  }
+
+  if ('scanMaxDepth' in payload) {
+    if (!Number.isInteger(payload.scanMaxDepth) || payload.scanMaxDepth < 2 || payload.scanMaxDepth > 8) {
+      throw new Error('scanMaxDepth must be an integer between 2 and 8');
+    }
+    out.scanMaxDepth = payload.scanMaxDepth;
+  }
+  if ('scanIgnoreHiddenPaths' in payload) {
+    if (typeof payload.scanIgnoreHiddenPaths !== 'boolean') throw new Error('scanIgnoreHiddenPaths must be boolean');
+    out.scanIgnoreHiddenPaths = payload.scanIgnoreHiddenPaths;
+  }
+  if ('scanGroupByFolder' in payload) {
+    if (typeof payload.scanGroupByFolder !== 'boolean') throw new Error('scanGroupByFolder must be boolean');
+    out.scanGroupByFolder = payload.scanGroupByFolder;
+  }
+  if ('scanTreatArtistRootLooseTracksAsSingles' in payload) {
+    if (typeof payload.scanTreatArtistRootLooseTracksAsSingles !== 'boolean') throw new Error('scanTreatArtistRootLooseTracksAsSingles must be boolean');
+    out.scanTreatArtistRootLooseTracksAsSingles = payload.scanTreatArtistRootLooseTracksAsSingles;
   }
   return out;
 }
@@ -301,7 +324,11 @@ app.put('/api/settings', async (req, reply) => {
           artworkPreferFolder = ?,
           artworkCacheEnabled = ?,
           artworkDefaultSize = ?,
-          artworkFolderFilenames = ?
+          artworkFolderFilenames = ?,
+          scanMaxDepth = ?,
+          scanIgnoreHiddenPaths = ?,
+          scanGroupByFolder = ?,
+          scanTreatArtistRootLooseTracksAsSingles = ?
       WHERE id = 1
     `).run(
       next.accentColor,
@@ -326,6 +353,40 @@ app.put('/api/settings', async (req, reply) => {
   }
 });
 
+
+app.get('/api/settings/scan', async () => {
+  const settings = getSettings();
+  return {
+    scanMaxDepth: settings.scanMaxDepth,
+    scanIgnoreHiddenPaths: settings.scanIgnoreHiddenPaths,
+    scanGroupByFolder: settings.scanGroupByFolder,
+    scanTreatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+  };
+});
+
+app.put('/api/settings/scan', async (req, reply) => {
+  try {
+    const next = validateSettings(req.body || {});
+    db.prepare(`
+      UPDATE settings
+      SET scanMaxDepth = ?, scanIgnoreHiddenPaths = ?, scanGroupByFolder = ?, scanTreatArtistRootLooseTracksAsSingles = ?
+      WHERE id = 1
+    `).run(
+      next.scanMaxDepth,
+      next.scanIgnoreHiddenPaths ? 1 : 0,
+      next.scanGroupByFolder ? 1 : 0,
+      next.scanTreatArtistRootLooseTracksAsSingles ? 1 : 0
+    );
+    return {
+      scanMaxDepth: next.scanMaxDepth,
+      scanIgnoreHiddenPaths: next.scanIgnoreHiddenPaths,
+      scanGroupByFolder: next.scanGroupByFolder,
+      scanTreatArtistRootLooseTracksAsSingles: next.scanTreatArtistRootLooseTracksAsSingles
+    };
+  } catch (error) {
+    return reply.code(400).send({ error: error.message });
+  }
+});
 
 app.get('/api/settings/artwork', async () => {
   const settings = getSettings();
@@ -378,8 +439,11 @@ app.post('/api/scan/start', async (req, reply) => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath, {
     recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
-    maxDepth: payload.maxDepth,
-    artistId: Number.isInteger(payload.artistId) ? payload.artistId : null
+    maxDepth: payload.maxDepth || settings.scanMaxDepth,
+    artistId: Number.isInteger(payload.artistId) ? payload.artistId : null,
+    ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
+    groupByFolder: settings.scanGroupByFolder,
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
   });
 });
 
@@ -392,8 +456,11 @@ app.post('/api/scan', async (req, reply) => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath, {
     recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
-    maxDepth: payload.maxDepth,
-    artistId: Number.isInteger(payload.artistId) ? payload.artistId : null
+    maxDepth: payload.maxDepth || settings.scanMaxDepth,
+    artistId: Number.isInteger(payload.artistId) ? payload.artistId : null,
+    ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
+    groupByFolder: settings.scanGroupByFolder,
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
   });
 });
 
@@ -481,8 +548,11 @@ app.post('/api/scan/artist/:id/deep', async (req, reply) => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath, {
     recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
-    maxDepth: payload.maxDepth,
-    artistId
+    maxDepth: payload.maxDepth || settings.scanMaxDepth,
+    artistId,
+    ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
+    groupByFolder: settings.scanGroupByFolder,
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
   });
 });
 
@@ -506,8 +576,11 @@ app.post('/api/artist/:id/scan/deep', async (req, reply) => {
   const settings = getSettings();
   return scanner.startScan(settings.libraryPath, {
     recursive: payload.recursive !== undefined ? Boolean(payload.recursive) : true,
-    maxDepth: payload.maxDepth,
-    artistId
+    maxDepth: payload.maxDepth || settings.scanMaxDepth,
+    artistId,
+    ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
+    groupByFolder: settings.scanGroupByFolder,
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
   });
 });
 
@@ -521,7 +594,12 @@ app.post('/api/library/rebuild', async (req, reply) => {
 
   clearLibraryState();
   const settings = getSettings();
-  scanner.startScan(settings.libraryPath);
+  scanner.startScan(settings.libraryPath, {
+    maxDepth: settings.scanMaxDepth,
+    ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
+    groupByFolder: settings.scanGroupByFolder,
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+  });
   return { ok: true };
 });
 
