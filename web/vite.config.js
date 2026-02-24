@@ -8,6 +8,13 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['crate-icon.svg'],
+      workbox: {
+        runtimeCaching: [{
+          urlPattern: /\/api\/artwork\/.*/i,
+          handler: "StaleWhileRevalidate",
+          options: { cacheName: "crate-artwork", expiration: { maxEntries: 2000, maxAgeSeconds: 60 * 60 * 24 * 30 } }
+        }]
+      },
       manifest: {
         name: 'Crate',
         short_name: 'Crate',

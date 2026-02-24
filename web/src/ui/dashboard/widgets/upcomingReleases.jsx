@@ -18,7 +18,7 @@ export const upcomingReleasesWidget = {
   render: (ctx) => {
     const grouped = ctx?.data?.upcomingByDate || fallback;
     return {
-      body: <div className="date-groups">{Object.entries(grouped).slice(0, 3).map(([date, items]) => <div key={date} className="date-row"><span className="muted">{date}</span><div className="cover-strip">{(items || []).slice(0, 5).map((album, i) => <Artwork key={`${date}-${i}`} src={getAlbumArtUrl(album)} alt={album.title || 'Upcoming album'} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size="sm" />)}</div></div>)}</div>,
+      body: <div className="date-groups">{Object.entries(grouped).slice(0, 3).map(([date, items]) => <div key={date} className="date-row"><span className="muted">{date}</span><div className="cover-strip">{(items || []).slice(0, 5).map((album, i) => <Artwork key={`${date}-${i}`} src={getAlbumArtUrl(album)} alt={album.title || 'Upcoming album'} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size="lg" />)}</div></div>)}</div>,
       footer: <Link to="/releases" className="card-link">View schedule</Link>
     };
   }
