@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { AlbumTile } from './helpers';
+import { AlbumTile, CoverStrip } from './helpers';
 
 const FALLBACK = [
   { id: 'nr1', title: 'Take Me Back to Eden', artistName: 'Sleep Token' },
@@ -17,9 +17,10 @@ export const newReleasesWidget = {
   route: '/releases',
   defaultVisible: true,
   render: (ctx) => {
-    const items = (ctx?.data?.newReleases || FALLBACK).slice(0, 8);
+    const items = (ctx?.data?.newReleases || FALLBACK).slice(0, 6);
+    const upcoming = (ctx?.data?.upcoming || []).slice(0, 10);
     return {
-      body: <div className="tile-grid tile-grid--large">{items.map((album, i) => <AlbumTile key={`${album.id || album.title}-${i}`} album={album} subtext={`${album.artistName || 'Unknown'} · Out now`} />)}</div>,
+      body: <div className="widget-stack"><div className="tile-grid tile-grid--large">{items.map((album, i) => <AlbumTile key={`${album.id || album.title}-${i}`} album={album} subtext={`${album.artistName || 'Unknown'} · Out now`} />)}</div><div><small className="muted">Upcoming Releases</small><CoverStrip items={upcoming} empty="No upcoming releases loaded." size="md" showMetaOnHover /></div></div>,
       footer: <Link to="/releases" className="card-link">Explore more</Link>
     };
   }

@@ -8,6 +8,23 @@ const defaults = {
   similarArtists: [{ name: 'Monuments' }, { name: 'Northlane' }, { name: 'Loathe' }]
 };
 
+function DiscoverTabs({ payload }) {
+  const tabs = [
+    { id: 'newForYou', label: 'New For You' },
+    { id: 'weeklyPicks', label: 'Weekly Picks' },
+    { id: 'similarArtists', label: 'Similar Artists' }
+  ];
+  const [tab, setTab] = React.useState('newForYou');
+  const activeItems = (payload[tab] || defaults[tab] || []).slice(0, 12);
+
+  return <div className="discover-tabs">
+    <div className="tab-row">{tabs.map((item) => <button key={item.id} type="button" className={`btn tab-btn ${tab === item.id ? 'active' : ''}`} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
+    <div className="tile-grid">{activeItems.map((item, i) => tab === 'similarArtists'
+      ? <ArtistTile key={`artist-${i}`} artist={item} subtext="Based on your library" />
+      : <AlbumTile key={`album-${i}`} album={item} subtext={item.artistName} size="tile" />)}</div>
+  </div>;
+}
+
 export const discoverWidget = {
   id: 'spotify-discover',
   title: 'Spotify Discover',
@@ -18,11 +35,7 @@ export const discoverWidget = {
   render: (ctx) => {
     const payload = ctx?.data?.discover || defaults;
     return {
-      body: <div className="discover-columns">
-        <div><h4>New for You</h4>{(payload.newForYou || defaults.newForYou).slice(0, 3).map((item, i) => <AlbumTile key={`new-${i}`} album={item} subtext={item.artistName} size="tile-lg" />)}</div>
-        <div><h4>Weekly Picks</h4>{(payload.weeklyPicks || defaults.weeklyPicks).slice(0, 3).map((item, i) => <AlbumTile key={`weekly-${i}`} album={item} subtext={item.artistName} size="tile-lg" />)}</div>
-        <div><h4>Similar Artists</h4>{(payload.similarArtists || defaults.similarArtists).slice(0, 3).map((item, i) => <ArtistTile key={`artist-${i}`} artist={item} subtext="Based on your library" />)}</div>
-      </div>,
+      body: <DiscoverTabs payload={payload} />,
       footer: <Link to="/discover" className="card-link">View All</Link>
     };
   }
