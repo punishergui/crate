@@ -852,62 +852,78 @@ app.post('/api/integrations/lidarr/search', async (req, reply) => {
 
 app.get('/api/artwork/album/:albumId', async (req, reply) => {
   const albumId = Number(req.params.albumId);
-  const size = String(req.query.size || '512');
+  const size = Number(req.query.size || 512);
   if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
-  if (!['256', '512', '1024', 'original'].includes(size)) return reply.code(400).send({ error: 'size must be 256|512|1024|original' });
+  if (![256, 512, 1024].includes(size)) return reply.code(400).send({ error: 'size must be 256|512|1024' });
 
-  const paths = artwork.getPaths(albumId);
-  const filePath = size === 'original' ? paths.original : (size === '256' ? paths.thumb256 : (size === '1024' ? paths.thumb1024 : paths.thumb512));
-  if (!fs.existsSync(filePath)) return reply.code(404).send({ error: 'Artwork not found' });
-  const stat = fs.statSync(filePath);
+  const diag = await artwork.diagnoseAlbum(albumId, { size });
+  if (!diag) return reply.code(404).send({ error: 'Album not found', albumId });
+  if (!diag.resolved) return reply.code(404).send({ error: 'Artwork not found', albumId, tried: diag.tried });
+
+  const stat = fs.statSync(diag.filePath);
   const etag = `W/"${stat.size}-${Number(stat.mtimeMs)}"`;
   if (req.headers['if-none-match'] === etag) return reply.code(304).send();
-  const header = Buffer.alloc(8);
-  const fd = fs.openSync(filePath, 'r');
-  fs.readSync(fd, header, 0, 8, 0);
-  fs.closeSync(fd);
-  const isPng = header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47;
-  reply.header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+  reply.header('Cache-Control', 'private, max-age=43200');
   reply.header('ETag', etag);
   reply.header('Last-Modified', stat.mtime.toUTCString());
-  reply.type(isPng ? 'image/png' : 'image/jpeg');
-  return reply.send(fs.createReadStream(filePath));
+  reply.type(diag.contentType || 'image/jpeg');
+  return reply.send(fs.createReadStream(diag.filePath));
 });
 
-app.get('/api/artwork/album/:albumId/status', async (req, reply) => {
+app.get('/api/artwork/album/:albumId/diagnose', async (req, reply) => {
+  const albumId = Number(req.params.albumId);
+  const size = Number(req.query.size || 512);
+  if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
+  const diag = await artwork.diagnoseAlbum(albumId, { size });
+  if (!diag) return reply.code(404).send({ error: 'Album not found', albumId });
+  return diag;
+});
+
+app.post('/api/artwork/album/:albumId/rescan', async (req, reply) => {
   const albumId = Number(req.params.albumId);
   if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
-  const status = artwork.getAlbumArtworkStatus(albumId);
-  if (!status) return reply.code(404).send({ error: 'No artwork status found' });
-  return { ...status, tried: ['embedded', 'cover.jpg|folder.jpg|front.jpg|*.png', 'cached remote', 'generated placeholder'] };
+  const diag = await artwork.diagnoseAlbum(albumId, { size: 512, forceRescan: true });
+  if (!diag) return reply.code(404).send({ error: 'Album not found', albumId });
+  return { ok: diag.resolved, ...diag };
 });
 
 app.get('/api/artwork/artist/:artistId', async (req, reply) => {
   const artistId = Number(req.params.artistId);
-  const size = String(req.query.size || '512');
+  const size = Number(req.query.size || 512);
   if (!Number.isInteger(artistId) || artistId < 1) return reply.code(400).send({ error: 'invalid artist id' });
-  const albumId = artwork.getArtistArtworkAlbumId(artistId);
-  if (!albumId) return reply.code(404).send({ error: 'Artwork not found' });
-  return reply.redirect(`/api/artwork/album/${albumId}?size=${size}`);
+  if (![256, 512, 1024].includes(size)) return reply.code(400).send({ error: 'size must be 256|512|1024' });
+  const diag = await artwork.diagnoseArtist(artistId, { size });
+  if (!diag) return reply.code(404).send({ error: 'Artist not found', artistId });
+  if (diag.filePath) {
+    const stat = fs.statSync(diag.filePath);
+    const etag = `W/"${stat.size}-${Number(stat.mtimeMs)}"`;
+    if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+    reply.header('Cache-Control', 'private, max-age=43200');
+    reply.header('ETag', etag);
+    reply.header('Last-Modified', stat.mtime.toUTCString());
+    reply.type(diag.contentType || 'image/jpeg');
+    return reply.send(fs.createReadStream(diag.filePath));
+  }
+  if (diag.redirectAlbumId) return reply.redirect(`/api/artwork/album/${diag.redirectAlbumId}?size=${size}`);
+  return reply.code(404).send({ error: 'Artwork not found', artistId, tried: diag.tried });
 });
 
-app.post('/api/artwork/album/:albumId/refresh', async (req, reply) => {
-  const albumId = Number(req.params.albumId);
-  if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
-  const exists = db.prepare('SELECT id FROM albums WHERE id = ? AND deleted = 0').get(albumId);
-  if (!exists) return reply.code(404).send({ error: 'Album not found' });
-  artwork.queue('art_fetch_album', { albumId, force: true });
-  return { queued: true };
+app.get('/api/artwork/artist/:artistId/diagnose', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
+  const size = Number(req.query.size || 512);
+  if (!Number.isInteger(artistId) || artistId < 1) return reply.code(400).send({ error: 'invalid artist id' });
+  const diag = await artwork.diagnoseArtist(artistId, { size });
+  if (!diag) return reply.code(404).send({ error: 'Artist not found', artistId });
+  return diag;
 });
 
-app.post('/api/artwork/artist/:artistId/refresh', async (req, reply) => {
+app.post('/api/artwork/artist/:artistId/rescan', async (req, reply) => {
   const artistId = Number(req.params.artistId);
   if (!Number.isInteger(artistId) || artistId < 1) return reply.code(400).send({ error: 'invalid artist id' });
-  const albums = db.prepare('SELECT id FROM albums WHERE artistId = ? AND deleted = 0').all(artistId);
-  for (const album of albums) {
-    artwork.queue('art_fetch_album', { albumId: album.id, force: true });
-  }
-  return { queued: albums.length };
+  const rescannedAlbums = await artwork.rescanArtist(artistId);
+  const diag = await artwork.diagnoseArtist(artistId, { size: 512 });
+  if (!diag) return reply.code(404).send({ error: 'Artist not found', artistId });
+  return { ok: diag.resolved, rescannedAlbums, ...diag };
 });
 
 app.post('/api/artwork/refresh-all', async () => {
