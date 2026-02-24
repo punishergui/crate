@@ -4,7 +4,13 @@ import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router
 import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
 import Artwork from './ui/components/Artwork';
-import { getAlbumArtUrl } from './ui/lib/artwork';
+import {
+  getAlbumArtDiagnoseUrl,
+  getAlbumArtRescanUrl,
+  getAlbumArtUrl,
+  getArtistArtDiagnoseUrl,
+  getArtistArtRescanUrl
+} from './ui/lib/artwork';
 import ArtworkPopout from './ui/components/ArtworkPopout.jsx';
 import './ui/theme/themes.css';
 import './styles.css';
@@ -44,7 +50,8 @@ const NAV_ITEMS = [
   { to: '/library', label: 'Library' },
   { to: '/scan-report', label: 'Scan Report' },
   { to: '/settings/themes', label: 'Themes' },
-  { to: '/settings/appearance', label: 'Appearance' }
+  { to: '/settings/appearance', label: 'Appearance' },
+  { to: '/settings/artwork', label: 'Artwork' }
 ];
 
 const REASONS = ['missing_tags', 'tag_mismatch', 'unsupported_extension', 'hidden_path', 'permission_denied', 'unreadable'];
@@ -67,8 +74,8 @@ function getUiArtSettings() {
 }
 
 function applyUiArtSettings(settings) {
-  const tileMap = { small: ['120px', '160px'], medium: ['160px', '200px'], large: ['190px', '230px'], massive: ['230px', '280px'] };
-  const [tile, tileLg] = tileMap[settings.artSize] || tileMap.medium;
+  const tileMap = { small: ['120px', '160px'], medium: ['180px', '220px'], large: ['190px', '230px'], massive: ['230px', '280px'] };
+  const [tile, tileLg] = tileMap[settings.artSize] || ['180px', '220px'];
   document.documentElement.style.setProperty('--artTile', tile);
   document.documentElement.style.setProperty('--artTileLg', tileLg);
   document.documentElement.style.setProperty('--artPopoutSize', `${settings.popoutSize}px`);
@@ -124,8 +131,64 @@ function Library() {
 
   return <section className="page-stack"><div className="split-head"><h1>Library</h1><div className="inline-actions"><button className={`btn ${mode === 'art-grid' ? 'btn-accent' : ''}`} onClick={() => setMode('art-grid')}>Art Grid</button><button className={`btn ${mode === 'compact-list' ? 'btn-accent' : ''}`} onClick={() => setMode('compact-list')}>Compact List</button></div></div><input value={q} onChange={(e) => setQ(e.target.value)} className="input" placeholder="Filter by artist or album" />
     <div className={mode === 'art-grid' ? 'album-grid' : 'simple-list'}>{list.items.map((item) => mode === 'art-grid'
-      ? <article key={item.id} className="album-grid-tile"><Artwork src={getAlbumArtUrl(item, 512)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="tile" badge={item.artworkSource || ''} /><strong>{item.title}</strong><span className="muted">{item.artistName}</span></article>
+      ? <article key={item.id} className="album-grid-tile"><Artwork src={getAlbumArtUrl(item, 512)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="tile-lg" badge={item.artworkSource || ''} /><strong>{item.title}</strong><span className="muted">{item.artistName}</span><ArtworkInspector title={item.title} diagnoseUrl={getAlbumArtDiagnoseUrl(item.id)} rescanUrl={getAlbumArtRescanUrl(item.id)} />{item.artistId ? <ArtworkInspector title={item.artistName || 'Artist'} diagnoseUrl={getArtistArtDiagnoseUrl(item.artistId)} rescanUrl={getArtistArtRescanUrl(item.artistId)} /> : null}</article>
       : <article key={item.id} className="list-item"><div className="media-row"><Artwork src={getAlbumArtUrl(item, 256)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" popout popoutTitle={item.title} popoutSubtitle={item.artistName} /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
+}
+
+
+function ArtworkInspector({ title, diagnoseUrl, rescanUrl, onDone }) {
+  const [open, setOpen] = React.useState(false);
+  const [diag, setDiag] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const runDiagnose = async () => {
+    if (!diagnoseUrl) return;
+    setBusy(true);
+    const payload = await api.get(diagnoseUrl).catch((error) => ({ error: error.message }));
+    setDiag(payload);
+    setBusy(false);
+    setOpen(true);
+  };
+
+  const runRescan = async () => {
+    if (!rescanUrl) return;
+    setBusy(true);
+    const payload = await api.post(rescanUrl).catch((error) => ({ error: error.message }));
+    setDiag(payload);
+    setBusy(false);
+    setOpen(true);
+    onDone?.();
+  };
+
+  return <div className="inline-actions">
+    <button className="btn" onClick={runDiagnose} disabled={busy}>Diagnose</button>
+    <button className="btn btn-accent" onClick={runRescan} disabled={busy}>Rescan Artwork</button>
+    {open ? <div className="modal-backdrop" role="presentation" onClick={() => setOpen(false)}><div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
+      <div className="card-head"><h2>{title} Diagnostics</h2><button className="btn" onClick={() => setOpen(false)}>Close</button></div>
+      <pre>{JSON.stringify(diag, null, 2)}</pre>
+    </div></div> : null}
+  </div>;
+}
+
+function ArtworkSettingsPage() {
+  const [settings, setSettings] = React.useState({ artworkPreferLocal: true, artworkAllowRemote: false });
+  const [status, setStatus] = React.useState('');
+  React.useEffect(() => { api.get('/api/settings').then((payload) => setSettings({ artworkPreferLocal: !!payload.artworkPreferLocal, artworkAllowRemote: !!payload.artworkAllowRemote })); }, []);
+  const patch = async (next) => {
+    const merged = { ...settings, ...next };
+    setSettings(merged);
+    await request('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) }).catch(() => null);
+  };
+  const rescanAll = async () => {
+    const payload = await api.post('/api/artwork/refresh-all').catch((error) => ({ error: error.message }));
+    setStatus(payload.error ? payload.error : `Queued ${payload.queued || 0} albums for artwork refresh.`);
+  };
+  return <section className="page-stack"><h1>Artwork</h1><div className="app-card"><div className="filters-row">
+    <label>Prefer folder artwork<select value={settings.artworkPreferLocal ? 'on' : 'off'} onChange={(e) => patch({ artworkPreferLocal: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Cache artwork locally<select value="on" disabled><option value="on">On</option></select></label>
+    <label>Allow remote artwork<select value={settings.artworkAllowRemote ? 'on' : 'off'} onChange={(e) => patch({ artworkAllowRemote: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <button className="btn btn-accent" onClick={rescanAll}>Rescan artwork now</button>
+  </div>{status ? <p className="muted">{status}</p> : null}</div></section>;
 }
 
 function ThemesSettingsPage() {
@@ -193,6 +256,7 @@ function App() {
       <Route path="/scan-report" element={<ScanReportPage scanStatus={scanStatus} setScanStatus={setScanStatus} onStartScan={startScan} />} />
       <Route path="/settings/themes" element={<ThemesSettingsPage />} />
       <Route path="/settings/appearance" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
+      <Route path="/settings/artwork" element={<ArtworkSettingsPage />} />
       <Route path="/concerts" element={<PlaceholderPage title="Concerts" text="Concert events and locations will appear here." />} />
       <Route path="/releases" element={<PlaceholderPage title="Releases" text="New and upcoming releases feed." />} />
       <Route path="/downloads" element={<PlaceholderPage title="Downloads" text="Soulseek download queue and history." />} />

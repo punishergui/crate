@@ -9,14 +9,6 @@ function firstNumber(...values) {
   return null;
 }
 
-function cleanUrl(value) {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')) return trimmed;
-  return null;
-}
-
 export function getBestArtworkSize(targetPx = 256) {
   const numeric = Number(targetPx) || 256;
   return AVAILABLE_SIZES.find((size) => size >= numeric) || 1024;
@@ -36,25 +28,34 @@ export function getKnownArtworkAvailability(id) {
   return hasArtworkCache.has(String(id)) ? hasArtworkCache.get(String(id)) : null;
 }
 
-export function getAlbumArtUrl(album, size = 256) {
-  if (!album || typeof album !== 'object') return null;
-  const direct = cleanUrl(album.artworkUrl || album.coverUrl || album.imageUrl);
-  if (direct) return direct;
-
-  const artworkSource = cleanUrl(album.artworkSource);
-  if (artworkSource) return artworkSource;
-
-  const albumId = firstNumber(album.albumId, album.id);
+export function getAlbumArtUrl(albumOrId, size = 256) {
+  const albumId = typeof albumOrId === 'object' ? firstNumber(albumOrId?.albumId, albumOrId?.id) : firstNumber(albumOrId);
   if (!albumId) return null;
   return `/api/artwork/album/${albumId}?size=${getBestArtworkSize(size)}`;
 }
 
-export function getArtistArtUrl(artist, size = 256) {
-  if (!artist || typeof artist !== 'object') return null;
-  const direct = cleanUrl(artist.artworkUrl || artist.imageUrl || artist.coverUrl);
-  if (direct) return direct;
-
-  const artistId = firstNumber(artist.artistId, artist.id);
+export function getArtistArtUrl(artistOrId, size = 256) {
+  const artistId = typeof artistOrId === 'object' ? firstNumber(artistOrId?.artistId, artistOrId?.id) : firstNumber(artistOrId);
   if (!artistId) return null;
   return `/api/artwork/artist/${artistId}?size=${getBestArtworkSize(size)}`;
+}
+
+export function getAlbumArtDiagnoseUrl(albumId) {
+  const id = firstNumber(albumId);
+  return id ? `/api/artwork/album/${id}/diagnose` : null;
+}
+
+export function getArtistArtDiagnoseUrl(artistId) {
+  const id = firstNumber(artistId);
+  return id ? `/api/artwork/artist/${id}/diagnose` : null;
+}
+
+export function getAlbumArtRescanUrl(albumId) {
+  const id = firstNumber(albumId);
+  return id ? `/api/artwork/album/${id}/rescan` : null;
+}
+
+export function getArtistArtRescanUrl(artistId) {
+  const id = firstNumber(artistId);
+  return id ? `/api/artwork/artist/${id}/rescan` : null;
 }
