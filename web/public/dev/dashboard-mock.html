@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" data-theme="neon-djent">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Mock</title>
+  <script>
+    (function () {
+      var key = 'crate.theme.v1';
+      document.documentElement.setAttribute('data-theme', localStorage.getItem(key) || 'neon-djent');
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/themes.css" />
+  <link rel="stylesheet" href="/css/ui-primitives.css" />
+  <link rel="stylesheet" href="/css/dashboard.css" />
+  <style>
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; padding: 1rem; }
+    .card.app-card { min-height: 240px; }
+  </style>
+</head>
+<body>
+  <section class="dashboard-shell">
+    <h1>Dashboard Mock</h1>
+    <div class="dashboard-grid">
+      <div class="dashboard-card-slot dashboard-card-slot--concerts"><section class="card app-card"><header class="card__head card-head"><h2>Concerts</h2></header><div class="card__body"><ul class="scroll-list"><li>Periphery · Mar 20</li><li>TesseracT · Apr 15</li></ul></div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--new-releases"><section class="card app-card"><header class="card__head card-head"><h2>New Releases</h2></header><div class="card__body"><div class="tile-grid tile-grid--large"><div class="cover-tile-v2"><div class="artwork" data-art-popout-title="Album 1" data-art-popout-subtitle="Artist 1"><img src="/artwork-placeholder.svg" width="256" height="256"/></div></div><div class="cover-tile-v2"><div class="artwork" data-art-popout-title="Album 2" data-art-popout-subtitle="Artist 2"><img src="/artwork-placeholder.svg" width="256" height="256"/></div></div><div class="cover-tile-v2"><div class="artwork" data-art-popout-title="Album 3" data-art-popout-subtitle="Artist 3"><img src="/artwork-placeholder.svg" width="256" height="256"/></div></div></div></div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--library"><section class="card app-card"><header class="card__head card-head"><h2>Your Library</h2></header><div class="card__body">180 artists · 1,320 albums</div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--soulseek"><section class="card app-card"><header class="card__head card-head"><h2>Soulseek</h2></header><div class="card__body">Queue: 4</div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--discover"><section class="card app-card"><header class="card__head card-head"><h2>Spotify Discover</h2></header><div class="card__body"><div class="tile-grid"><div class="cover-tile-v2"><div class="artwork" data-art-popout-title="Discover 1" data-art-popout-subtitle="Artist"><img src="/artwork-placeholder.svg" width="256" height="256"/></div></div><div class="cover-tile-v2"><div class="artwork" data-art-popout-title="Discover 2" data-art-popout-subtitle="Artist"><img src="/artwork-placeholder.svg" width="256" height="256"/></div></div></div></div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--missing"><section class="card app-card"><header class="card__head card-head"><h2>Missing Albums</h2></header><div class="card__body">Wanted: 12</div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--upcoming"><section class="card app-card"><header class="card__head card-head"><h2>Upcoming Releases</h2></header><div class="card__body">Apr 20 · Example Release</div></section></div>
+      <div class="dashboard-card-slot dashboard-card-slot--activity"><section class="card app-card"><header class="card__head card-head"><h2>Recent Activity</h2></header><div class="card__body"><ul class="scroll-list"><li>Played: Album A</li><li>Played: Album B</li><li>Played: Album C</li><li>Played: Album D</li><li>Played: Album E</li></ul></div></section></div>
+    </div>
+  </section>
+  <script type="module">
+    import { attachCoverHoverPreview } from '/js/coverHoverPreview.js';
+    attachCoverHoverPreview('body');
+  </script>
+</body>
+</html>

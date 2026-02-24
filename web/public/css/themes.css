@@ -1,25 +1,68 @@
-html[data-theme='neon-djent'] {
-  --bg-0: #0b0f12;
-  --bg-1: #151b20;
-  --card: #1b2329;
-  --line: rgba(122, 247, 255, 0.2);
-  --text: #ecf8ff;
-  --text-dim: #8da3b5;
-  --accent: #28e6f0;
-  --accent-secondary: #9d6bff;
-  --accent-glow: rgba(40, 230, 240, 0.35);
-  --glow: 0 0 0 1px var(--accent), 0 0 22px var(--accent-glow);
+:root {
+  --bg: #090a0d;
+  --surface: #13161b;
+  --surface2: #171b22;
+  --text: #f2f3f5;
+  --muted: #9097a4;
+  --border: #242931;
+  --accent: #ff9f1a;
+  --accent2: #47d1c8;
+  --danger: #ff6b6b;
+  --success: #40d29f;
+  --warning: #ffce6a;
+  --shadow: 0 12px 30px rgb(0 0 0 / 45%);
+  --glow: 0 0 18px rgb(255 159 26 / 33%);
+  --focus: #ffb347;
+  --accentGlow: rgb(71 209 200 / 28%);
+  --artBorder: rgb(255 171 77 / 25%);
+  --artOverlay: rgb(6 6 9 / 45%);
+  --artPlaceholder1: #46301a;
+  --artPlaceholder2: #221a12;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --grain: radial-gradient(circle at 30% 30%, rgb(255 255 255 / 2%), transparent 45%), radial-gradient(circle at 70% 65%, rgb(255 255 255 / 1.5%), transparent 50%);
+  --artRadius: 0px;
+  --artTile: 168px;
+  --artTileLg: 228px;
+  --artPopoutSize: 320px;
+  --artPopoutShadow: 0 20px 40px rgb(0 0 0 / 50%);
+  --artPopoutBorder: 1px solid var(--artBorder);
 }
 
-html[data-theme='classic-dark'] {
-  --bg-0: #0a0d11;
-  --bg-1: #12171f;
-  --card: #1a202a;
-  --line: rgba(255, 255, 255, 0.12);
-  --text: #f1f4f8;
-  --text-dim: #9aa6b2;
-  --accent: #4d8dff;
-  --accent-secondary: #8a94a5;
-  --accent-glow: rgba(77, 141, 255, 0.28);
-  --glow: 0 0 0 1px var(--accent), 0 0 18px var(--accent-glow);
+html[data-theme='neon-djent'] {
+  --bg: #090a0d;
+  --surface: #13161b;
+  --surface2: #171b22;
+  --text: #f2f3f5;
+  --muted: #9097a4;
+  --border: #242931;
+  --accent: #ff9f1a;
+  --accent2: #47d1c8;
+  --glow: 0 0 18px rgb(255 159 26 / 33%);
+  --focus: #ffb347;
+  --accentGlow: rgb(71 209 200 / 28%);
+}
+
+html[data-theme='slate'] {
+  --bg: #101319;
+  --surface: #1a1f29;
+  --surface2: #242c39;
+  --text: #ecf0f8;
+  --muted: #97a4bc;
+  --border: #2c3442;
+  --accent: #8ea0b8;
+  --accent2: #a7b3c5;
+  --glow: 0 0 12px rgb(167 179 197 / 16%);
+  --focus: #b6c2d4;
+  --accentGlow: rgb(167 179 197 / 18%);
+  --artBorder: rgb(167 179 197 / 20%);
+  --artPlaceholder1: #2e3a4f;
+  --artPlaceholder2: #1c2534;
+}
+
+:root {
+  --background: var(--bg);
+  --mutedText: var(--muted);
+  --focusRing: var(--focus);
 }
