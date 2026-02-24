@@ -7,7 +7,7 @@ const DATA_DIR = '/data';
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const DB_PATH = path.join(DATA_DIR, 'crate.sqlite');
-const LATEST_SCHEMA_VERSION = 2;
+const LATEST_SCHEMA_VERSION = 3;
 
 function ensureDataDirs() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -133,7 +133,27 @@ function migrationV2(db) {
   ensureIndex(db, 'idx_wishlist_status', 'CREATE INDEX idx_wishlist_status ON wishlist_albums(status)');
 }
 
-const MIGRATIONS = [migrationV1, migrationV2];
+function migrationV3(db) {
+  ensureColumn(db, 'albums', 'artworkSource', "ALTER TABLE albums ADD COLUMN artworkSource TEXT NOT NULL DEFAULT 'none'");
+  ensureColumn(db, 'albums', 'artworkPath', 'ALTER TABLE albums ADD COLUMN artworkPath TEXT');
+  ensureColumn(db, 'albums', 'artworkMtime', 'ALTER TABLE albums ADD COLUMN artworkMtime INTEGER');
+  ensureColumn(db, 'albums', 'artworkHash', 'ALTER TABLE albums ADD COLUMN artworkHash TEXT');
+
+  ensureColumn(db, 'artists', 'artworkSource', "ALTER TABLE artists ADD COLUMN artworkSource TEXT NOT NULL DEFAULT 'none'");
+  ensureColumn(db, 'artists', 'artworkPath', 'ALTER TABLE artists ADD COLUMN artworkPath TEXT');
+  ensureColumn(db, 'artists', 'artworkMtime', 'ALTER TABLE artists ADD COLUMN artworkMtime INTEGER');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS artwork_cache (
+      key TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      mtime INTEGER,
+      createdAt TEXT NOT NULL
+    )
+  `);
+}
+
+const MIGRATIONS = [migrationV1, migrationV2, migrationV3];
 
 function runMigrations(db) {
   const startingVersion = readSchemaVersion(db);
@@ -190,6 +210,9 @@ function initDb(options = {}) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       slug TEXT UNIQUE,
+      artworkSource TEXT NOT NULL DEFAULT 'none',
+      artworkPath TEXT,
+      artworkMtime INTEGER,
       deleted INTEGER NOT NULL DEFAULT 0,
       firstSeen TEXT NOT NULL,
       lastSeen TEXT NOT NULL
@@ -207,6 +230,10 @@ function initDb(options = {}) {
       lastFileMtime INTEGER,
       formatsJson TEXT NOT NULL DEFAULT '[]',
       trackCount INTEGER NOT NULL DEFAULT 0,
+      artworkSource TEXT NOT NULL DEFAULT 'none',
+      artworkPath TEXT,
+      artworkMtime INTEGER,
+      artworkHash TEXT,
       deleted INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY(artistId) REFERENCES artists(id)
     );
@@ -361,6 +388,13 @@ function initDb(options = {}) {
       startedAt INTEGER,
       finishedAt INTEGER,
       error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS artwork_cache (
+      key TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      mtime INTEGER,
+      createdAt TEXT NOT NULL
     );
   `);
   try {

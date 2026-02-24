@@ -512,7 +512,7 @@ app.get('/api/scan/skipped/extensions', async (req, reply) => {
   }
 
   const reasonInput = typeof req.query.reason === 'string' ? req.query.reason.trim() : '';
-  const reason = reasonInput ? scanner.normalizeSkipReason(reasonInput) : 'unsupported_extension';
+  const reason = reasonInput ? scanner.normalizeSkipReason(reasonInput) : 'ignored_non_audio';
 
   const latestScan = db.prepare('SELECT scanStartedAt FROM scan_skipped ORDER BY id DESC LIMIT 1').get();
   if (!latestScan?.scanStartedAt) return { items: [] };
@@ -1059,7 +1059,7 @@ app.get('/api/artwork/artist/:artistId', async (req, reply) => {
     return reply.send(fs.createReadStream(diag.filePath));
   }
   if (diag.redirectAlbumId) return reply.redirect(`/api/artwork/album/${diag.redirectAlbumId}?size=${size}`);
-  return reply.code(404).send({ error: 'Artist not found', artistId });
+  return reply.code(500).send({ error: 'failed to resolve artist artwork', artistId });
 });
 
 app.get('/api/artwork/artist/:artistId/diagnose', async (req, reply) => {
@@ -1078,6 +1078,16 @@ app.post('/api/artwork/artist/:artistId/rescan', async (req, reply) => {
   const diag = await artwork.diagnoseArtist(artistId, { size: 512 });
   if (!diag) return reply.code(404).send({ error: 'Artist not found', artistId });
   return { ok: diag.resolved, rescannedAlbums, ...diag };
+});
+
+
+app.post('/api/artwork/rebuild', async (req, reply) => {
+  const scope = String(req.query.scope || req.body?.scope || 'all');
+  const idRaw = req.query.id ?? req.body?.id;
+  const id = idRaw !== undefined ? Number(idRaw) : null;
+  if (!['all', 'artist', 'album'].includes(scope)) return reply.code(400).send({ error: 'scope must be all|artist|album' });
+  if ((scope === 'artist' || scope === 'album') && (!Number.isInteger(id) || id < 1)) return reply.code(400).send({ error: 'id must be a positive integer for artist|album scope' });
+  return artwork.rebuildArtwork({ scope, id });
 });
 
 app.post('/api/artwork/refresh-all', async () => {

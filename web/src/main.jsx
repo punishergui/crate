@@ -56,7 +56,7 @@ const NAV_ITEMS = [
   { to: '/settings/scan', label: 'Library Scan' }
 ];
 
-const REASONS = ['missing_tags', 'tag_mismatch', 'unsupported_extension', 'hidden_path', 'permission_denied', 'unreadable'];
+const REASONS = ['ignored_non_audio', 'missing_tags', 'tag_mismatch', 'hidden_path', 'permission_denied', 'unreadable'];
 
 const UI_ART_KEY = 'crate.ui.art.v1';
 const VIEW_MODE_KEY = 'crate.ui.viewModes.v1';
@@ -232,7 +232,7 @@ function ThemesSettingsPage() {
 function AppearanceSettingsPage({ uiSettings, setUiSettings }) {
   const patch = (next) => setUiSettings((prev) => ({ ...prev, ...next }));
   return <section className="page-stack"><h1>Appearance</h1><div className="app-card"><div className="filters-row">
-    <label>Album art size<select value={uiSettings.artSize} onChange={(e) => patch({ artSize: e.target.value })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="massive">Massive</option></select></label>
+    <label>Artwork density<select value={uiSettings.artSize} onChange={(e) => patch({ artSize: e.target.value })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
     <label>Enable hover popout<select value={uiSettings.hoverPopout ? 'on' : 'off'} onChange={(e) => patch({ hoverPopout: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
     <label>Popout size<select value={uiSettings.popoutSize} onChange={(e) => patch({ popoutSize: Number(e.target.value) })}><option value={200}>200</option><option value={280}>280</option><option value={360}>360</option></select></label>
     <label>Square corners<select value={uiSettings.squareCorners ? 'on' : 'off'} onChange={(e) => patch({ squareCorners: e.target.value === 'on' })}><option value="on">On</option><option value="off">Rounded</option></select></label>
@@ -268,8 +268,8 @@ function PlaceholderPage({ title, text }) { return <section className="page-stac
 function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
   const [selectedReason, setSelectedReason] = React.useState(''); const [selectedExt, setSelectedExt] = React.useState(''); const [searchText, setSearchText] = React.useState('');
   const [offset, setOffset] = React.useState(0); const [rows, setRows] = React.useState([]); const [total, setTotal] = React.useState(0); const [extensions, setExtensions] = React.useState([]); const [selectedItem, setSelectedItem] = React.useState(null); const limit = 50;
-  React.useEffect(() => { if (selectedReason !== 'unsupported_extension') { setExtensions([]); setSelectedExt(''); return; }
-    api.get('/api/scan/skipped/extensions?reason=unsupported_extension&limit=20').then((payload) => setExtensions(payload.items || [])).catch(() => setExtensions([]));
+  React.useEffect(() => { if (selectedReason !== 'ignored_non_audio') { setExtensions([]); setSelectedExt(''); return; }
+    api.get('/api/scan/skipped/extensions?reason=ignored_non_audio&limit=20').then((payload) => setExtensions(payload.items || [])).catch(() => setExtensions([]));
   }, [selectedReason]);
   React.useEffect(() => {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) }); if (selectedReason) query.set('reason', selectedReason);
@@ -283,7 +283,7 @@ function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
     <AppCard title="Skipped Reasons"><div className="chip-row">{reasonEntries.map(([reason, count]) => <button key={reason} className={`chip ${selectedReason === reason ? 'active' : ''}`} onClick={() => { setSelectedReason(reason === selectedReason ? '' : reason); setOffset(0); }}>{reason} ({count})</button>)}</div></AppCard>
     <AppCard title="Skipped Files" right={<span className="muted">{offset + 1}-{Math.min(offset + limit, total)} of {total}</span>}>
       <div className="filters-row"><select value={selectedReason} onChange={(event) => { setSelectedReason(event.target.value); setOffset(0); }}><option value="">All reasons</option>{REASONS.map((r) => <option key={r} value={r}>{r}</option>)}</select>
-      <select value={selectedExt} onChange={(event) => setSelectedExt(event.target.value)} disabled={selectedReason !== 'unsupported_extension'}><option value="">All extensions</option>{extensions.map((item) => <option key={item.ext || '(none)'} value={item.ext || ''}>{item.ext || '(none)'} ({item.count})</option>)}</select>
+      <select value={selectedExt} onChange={(event) => setSelectedExt(event.target.value)} disabled={selectedReason !== 'ignored_non_audio'}><option value="">All extensions</option>{extensions.map((item) => <option key={item.ext || '(none)'} value={item.ext || ''}>{item.ext || '(none)'} ({item.count})</option>)}</select>
       <input className="input" placeholder="Search path or message" value={searchText} onChange={(event) => setSearchText(event.target.value)} /></div>
       <div className="table-wrap"><table className="scan-table"><thead><tr><th>When</th><th>Reason</th><th>Ext</th><th>Path</th><th>Message</th><th>Actions</th></tr></thead><tbody>{visibleRows.map((item, idx) => <tr key={`${item.path}-${idx}`}><td>{formatDate(item.at)}</td><td>{item.reason}</td><td>{item.ext || '—'}</td><td className="path-cell">{item.path}</td><td>{item.message || '—'}</td><td><button className="btn btn-small" onClick={() => setSelectedItem(item)}>Details</button></td></tr>)}</tbody></table></div>
       {!visibleRows.length ? <p className="muted">No skipped rows matched the current filter.</p> : null}
