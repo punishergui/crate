@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { api } from './lib/api';
 import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
 import Artwork from './ui/components/Artwork';
@@ -20,7 +21,8 @@ registerSW({ immediate: true });
 const THEME_KEY = 'crate.theme.v1';
 const THEMES = [
   { id: 'neon-djent', name: 'Neon Djent', vibe: 'Dark charcoal shell with neon orange accents and subtle teal glow.', swatches: ['#090a0d', '#13161b', '#ff9f1a', '#47d1c8'] },
-  { id: 'slate', name: 'Slate', vibe: 'Neutral dark palette with restrained contrast and minimal glow.', swatches: ['#101319', '#1a1f29', '#8ea0b8', '#a7b3c5'] }
+  { id: 'steel-smoke', name: 'Steel & Smoke', vibe: 'Neutral metal palette with restrained contrast and low glow.', swatches: ['#0f1218', '#1b212b', '#8fa1b8', '#c5ced9'] },
+  { id: 'warm-tube-glow', name: 'Warm Tube Glow', vibe: 'Warm amber highlights with soft vintage tube color.', swatches: ['#14100d', '#221915', '#ffb15a', '#ffd48a'] }
 ];
 
 function getTheme() {
@@ -33,23 +35,11 @@ function applyTheme(themeId) {
   localStorage.setItem(THEME_KEY, next);
 }
 
-async function request(url, options) {
-  const response = await fetch(url, options);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`);
-  return payload;
-}
-
-const api = {
-  get: (url) => request(url),
-  post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-  put: (url, body = {}) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-};
-
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
   { to: '/library', label: 'Library' },
   { to: '/scan-report', label: 'Scan Report' },
+  { to: '/repair', label: 'Repair Center' },
   { to: '/settings/themes', label: 'Themes' },
   { to: '/settings/appearance', label: 'Appearance' },
   { to: '/settings/artwork', label: 'Artwork' },
@@ -257,8 +247,12 @@ function ScanSettingsPage({ scanSettings, setScanSettings }) {
     <label>Scan subfolders<select value={scanSettings.scanGroupByFolder ? 'on' : 'off'} onChange={(e) => patch({ scanGroupByFolder: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
     <label>Scan depth<select value={scanSettings.scanMaxDepth} onChange={(e) => patch({ scanMaxDepth: Number(e.target.value) })}>{[2,3,4,5,6,7,8].map((v) => <option key={v} value={v}>{v}</option>)}</select></label>
     <label>Ignore hidden folders<select value={scanSettings.scanIgnoreHiddenPaths ? 'on' : 'off'} onChange={(e) => patch({ scanIgnoreHiddenPaths: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Include disc subfolders<select value={scanSettings.scanIncludeDiscSubfolders ? 'on' : 'off'} onChange={(e) => patch({ scanIncludeDiscSubfolders: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Include Singles folders<select value={scanSettings.scanIncludeSingles ? 'on' : 'off'} onChange={(e) => patch({ scanIncludeSingles: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
   </div><div className="filters-row">
     <label>Root loose tracks as singles<select value={scanSettings.scanTreatArtistRootLooseTracksAsSingles ? 'on' : 'off'} onChange={(e) => patch({ scanTreatArtistRootLooseTracksAsSingles: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Treat compilations separately<select value={scanSettings.scanTreatCompilationAsSeparate ? 'on' : 'off'} onChange={(e) => patch({ scanTreatCompilationAsSeparate: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Ignored folder names<input className="input" value={(scanSettings.scanIgnoreFolderNames || []).join(', ')} onChange={(e) => patch({ scanIgnoreFolderNames: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })} /></label>
     <button className="btn btn-accent" onClick={save}>Save Scan Settings</button>
   </div>{status ? <p className="muted">{status}</p> : null}</div></section>;
 }
@@ -293,10 +287,58 @@ function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
   </section>;
 }
 
+
+
+function RepairCenterPage({ onStartScan }) {
+  const TABS = ['Missing Albums', 'Tag Mismatch', 'Missing Tags', 'Permission Issues', 'Unsupported/Ignored Files', 'Tools'];
+  const [tab, setTab] = React.useState(TABS[0]);
+  const [rows, setRows] = React.useState([]);
+  const [status, setStatus] = React.useState('');
+  const [testPath, setTestPath] = React.useState('');
+
+  React.useEffect(() => {
+    const load = async () => {
+      if (tab === 'Missing Albums') {
+        const payload = await api.get('/api/expected/missing?limit=100&page=1').catch(() => ({ items: [] }));
+        setRows(payload.items || []);
+      } else if (tab === 'Tag Mismatch') {
+        const payload = await api.get('/api/scan/skipped?reason=tag_mismatch&limit=100').catch(() => ({ items: [] }));
+        setRows(payload.items || []);
+      } else if (tab === 'Missing Tags') {
+        const payload = await api.get('/api/scan/skipped?reason=missing_tags&limit=100').catch(() => ({ items: [] }));
+        setRows(payload.items || []);
+      } else if (tab === 'Permission Issues') {
+        const payload = await api.get('/api/scan/skipped?reason=permission_denied&limit=100').catch(() => ({ items: [] }));
+        setRows(payload.items || []);
+      } else if (tab === 'Unsupported/Ignored Files') {
+        const payload = await api.get('/api/scan/skipped?reason=ignored_non_audio&limit=100').catch(() => ({ items: [] }));
+        setRows(payload.items || []);
+      } else {
+        setRows([]);
+      }
+    };
+    load();
+  }, [tab]);
+
+  const testAccess = async () => {
+    const payload = await api.post('/api/debug/test-path-access', { path: testPath }).catch((error) => ({ error: error.message }));
+    setStatus(payload.error ? payload.error : JSON.stringify(payload));
+  };
+
+  return <section className="page-stack repair-layout"><h1>Repair Center</h1><div className="repair-grid">
+    <aside className="repair-tabs">{TABS.map((item) => <button key={item} className={`chip ${tab === item ? 'active' : ''}`} onClick={() => setTab(item)}>{item}</button>)}</aside>
+    <div className="app-card">
+      {tab === 'Tools' ? <div className="filters-row"><button className="btn btn-accent" onClick={() => onStartScan()}>Rescan Library</button><button className="btn" onClick={() => api.post('/api/artwork/refresh-all').then(() => setStatus('Artwork rebuild queued')).catch((e) => setStatus(e.message))}>Rebuild Artwork</button><button className="btn" onClick={() => api.post('/api/library/adopt-folder', { artistId: 1, folderPath: '/music' }).then(() => setStatus('Folder adopted')).catch((e) => setStatus(e.message))}>Adopt Folder</button></div> : null}
+      {tab === 'Permission Issues' ? <div className="filters-row"><input className="input" placeholder="/music/Artist/Album" value={testPath} onChange={(e) => setTestPath(e.target.value)} /><button className="btn" onClick={testAccess}>Test access</button></div> : null}
+      <div className="table-wrap"><table className="scan-table"><thead><tr><th>Path / Item</th><th>Reason</th><th>Message</th><th>Action</th></tr></thead><tbody>{rows.map((item, idx) => <tr key={idx}><td className="path-cell">{item.path || `${item.artistName} — ${item.title}`}</td><td>{item.reason || 'missing_album'}</td><td>{item.message || (tab === 'Permission Issues' ? 'Grant r-x to the container group/user for this path.' : '—')}</td><td><button className="btn btn-small" onClick={() => navigator.clipboard?.writeText(item.path || '')}>Copy</button></td></tr>)}</tbody></table></div>
+      {!rows.length ? <p className="muted">No rows found for this section yet.</p> : null}
+      {status ? <p className="muted">{status}</p> : null}
+    </div></div></section>;
+}
 function App() {
   const [scanStatus, setScanStatus] = useScanStatusPolling();
   const [uiSettings, setUiSettings] = React.useState(getUiArtSettings);
-  const [scanSettings, setScanSettings] = React.useState({ scanMaxDepth: 4, scanIgnoreHiddenPaths: true, scanGroupByFolder: true, scanTreatArtistRootLooseTracksAsSingles: true });
+  const [scanSettings, setScanSettings] = React.useState({ scanMaxDepth: 3, scanIgnoreHiddenPaths: true, scanGroupByFolder: true, scanTreatArtistRootLooseTracksAsSingles: true, scanIncludeDiscSubfolders: true, scanIncludeSingles: true, scanTreatCompilationAsSeparate: false, scanIgnoreFolderNames: ['.crate','_tmp','@eaDir'] });
   useArtHover(uiSettings.hoverPopout);
   React.useEffect(() => { applyUiArtSettings(uiSettings); localStorage.setItem(UI_ART_KEY, JSON.stringify(uiSettings)); }, [uiSettings]);
   React.useEffect(() => { api.get('/api/settings/scan').then((payload) => setScanSettings(payload)).catch(() => null); }, []);
@@ -307,6 +349,7 @@ function App() {
       <Route path="/" element={<DashboardPage />} />
       <Route path="/library" element={<Library />} />
       <Route path="/scan-report" element={<ScanReportPage scanStatus={scanStatus} setScanStatus={setScanStatus} onStartScan={startScan} />} />
+      <Route path="/repair" element={<RepairCenterPage onStartScan={startScan} />} />
       <Route path="/settings/themes" element={<ThemesSettingsPage />} />
       <Route path="/settings/appearance" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
       <Route path="/settings/artwork" element={<ArtworkSettingsPage />} />
