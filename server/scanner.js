@@ -3,7 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { slugifyArtistName, shortHash } = require('./slug');
 
-const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.wav']);
+const AUDIO_EXTS = new Set(['.flac', '.mp3', '.m4a', '.wav', '.opus']);
 const CANONICAL_SKIP_REASONS = new Set([
   'unreadable',
   'unsupported_extension',
@@ -39,12 +39,17 @@ function classifyFsError(error) {
   return 'unreadable';
 }
 
-function buildFsErrorDetails(error) {
-  return {
+function buildFsErrorDetails(error, filePath = null) {
+  const details = {
+    path: filePath,
     code: error?.code || null,
     errno: error?.errno ?? null,
     message: error?.message || String(error || '')
   };
+  if (details.code === 'EACCES' || details.code === 'EPERM') {
+    details.suggestion = 'Grant read+execute to the container user/group for this folder path.';
+  }
+  return details;
 }
 
 function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath, options = {}) {
@@ -57,7 +62,7 @@ function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath
     onSkip?.(dir, {
       reason: classifyFsError(error),
       message: error?.code || null,
-      detailsJson: buildFsErrorDetails(error)
+      detailsJson: buildFsErrorDetails(error, dir)
     });
     return results;
   }
@@ -73,6 +78,9 @@ function walkDir(dir, maxDepth = 3, depth = 0, results = [], onSkip, onVisitPath
       }
       if (options.ignoreHiddenPaths && isHiddenName(entry.name)) {
         onSkip?.(fullPath, 'hidden_path');
+        continue;
+      }
+      if (Array.isArray(options.ignoreFolderNames) && options.ignoreFolderNames.includes(entry.name.toLowerCase())) {
         continue;
       }
       if (depth + 1 > maxDepth) {
@@ -272,8 +280,12 @@ function resolveArtistNameFromTags(tagInfo, fallbackArtistName) {
   return tagInfo?.albumArtist || tagInfo?.artist || fallbackArtistName;
 }
 
-function buildAlbumGroupKey(albumName, albumArtistName) {
-  return `${normalizeCompareValue(albumArtistName)}::${normalizeCompareValue(albumName)}`;
+function buildAlbumGroupKey(albumName, albumArtistName, year = null, treatCompilationAsSeparate = false) {
+  const yearToken = String(year || '').trim();
+  const compilationToken = treatCompilationAsSeparate && normalizeCompareValue(albumArtistName).includes('various artists')
+    ? '::compilation'
+    : '';
+  return `${normalizeCompareValue(albumArtistName)}::${normalizeCompareValue(albumName)}${yearToken ? `::${yearToken}` : ''}${compilationToken}`;
 }
 
 function getStatInodeKey(stat) {
@@ -297,9 +309,12 @@ function hashFileFirstChunk(filePath) {
   }
 }
 
-function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignoreHiddenPaths = true }, onSkip, onVisitPath) {
+function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignoreHiddenPaths = true, includeDiscSubfolders = true, includeSingles = true, ignoreFolderNames = [] }, onSkip, onVisitPath) {
+  if (!includeDiscSubfolders) {
+    maxDepth = Math.min(maxDepth, 1);
+  }
   const walkMaxDepth = recursive ? maxDepth : 0;
-  const allPaths = walkDir(artistPath, walkMaxDepth, 0, [], onSkip, onVisitPath, { ignoreHiddenPaths });
+  const allPaths = walkDir(artistPath, walkMaxDepth, 0, [], onSkip, onVisitPath, { ignoreHiddenPaths, ignoreFolderNames });
   const out = [];
 
   for (const fullPath of allPaths) {
@@ -310,7 +325,7 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignor
       onSkip?.(fullPath, {
         reason: classifyFsError(error),
         message: error?.code || null,
-        detailsJson: buildFsErrorDetails(error)
+        detailsJson: buildFsErrorDetails(error, fullPath)
       });
       continue;
     }
@@ -324,7 +339,7 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignor
         onSkip?.(fullPath, {
           reason: classifyFsError(error),
           message: error?.code || null,
-          detailsJson: buildFsErrorDetails(error)
+          detailsJson: buildFsErrorDetails(error, fullPath)
         });
         continue;
       }
@@ -332,6 +347,10 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignor
 
     if (!stat.isFile()) {
       onSkip?.(fullPath, 'unsupported-file-type');
+      continue;
+    }
+
+    if (!includeSingles && /\/(singles?)\//i.test(fullPath.replace(/\\/g, '/'))) {
       continue;
     }
 
@@ -382,11 +401,15 @@ class Scanner {
     this.cancelRequested = false;
     const scanOptions = {
       recursive: options.recursive !== undefined ? Boolean(options.recursive) : true,
-      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 4,
+      maxDepth: Number.isInteger(options.maxDepth) && options.maxDepth > 0 ? options.maxDepth : 3,
       artistId: Number.isInteger(options.artistId) ? options.artistId : null,
       ignoreHiddenPaths: options.ignoreHiddenPaths !== undefined ? Boolean(options.ignoreHiddenPaths) : true,
       groupByFolder: options.groupByFolder !== undefined ? Boolean(options.groupByFolder) : true,
-      treatArtistRootLooseTracksAsSingles: options.treatArtistRootLooseTracksAsSingles !== undefined ? Boolean(options.treatArtistRootLooseTracksAsSingles) : true
+      treatArtistRootLooseTracksAsSingles: options.treatArtistRootLooseTracksAsSingles !== undefined ? Boolean(options.treatArtistRootLooseTracksAsSingles) : true,
+      includeDiscSubfolders: options.includeDiscSubfolders !== undefined ? Boolean(options.includeDiscSubfolders) : true,
+      includeSingles: options.includeSingles !== undefined ? Boolean(options.includeSingles) : true,
+      treatCompilationAsSeparate: options.treatCompilationAsSeparate !== undefined ? Boolean(options.treatCompilationAsSeparate) : false,
+      ignoreFolderNames: Array.isArray(options.ignoreFolderNames) ? options.ignoreFolderNames.map((item) => String(item).trim().toLowerCase()).filter(Boolean) : ['.crate', '_tmp', '@eadir']
     };
 
     setImmediate(() => this.runScan(libraryPath, scanOptions).catch((error) => {
@@ -704,7 +727,10 @@ class Scanner {
           {
             recursive: scanOptions.recursive !== false,
             maxDepth: scanOptions.maxDepth || 4,
-            ignoreHiddenPaths: scanOptions.ignoreHiddenPaths !== false
+            ignoreHiddenPaths: scanOptions.ignoreHiddenPaths !== false,
+            includeDiscSubfolders: scanOptions.includeDiscSubfolders !== false,
+            includeSingles: scanOptions.includeSingles !== false,
+            ignoreFolderNames: scanOptions.ignoreFolderNames || []
           },
           (filePath, reason) => {
             this.pushSkip(skipped, filePath, reason);
@@ -725,7 +751,7 @@ class Scanner {
             this.pushSkip(skipped, track.path, {
               reason: classifyFsError(error),
               message: error?.code || null,
-              detailsJson: buildFsErrorDetails(error)
+              detailsJson: buildFsErrorDetails(error, track.path)
             });
             continue;
           }
@@ -765,12 +791,22 @@ class Scanner {
 
           const trackDir = track.directory;
           const looseAtRoot = trackDir === artistPath;
-          const groupDir = (scanOptions.groupByFolder === false)
+          const albumYear = normalizeTagValue(metadata.tagInfo?.year);
+          const groupingArtist = normalizeTagValue(albumArtist) || normalizeTagValue(artist) || artistName;
+          const albumGroupKey = buildAlbumGroupKey(albumName, groupingArtist, albumYear, scanOptions.treatCompilationAsSeparate);
+
+          let groupDir = (scanOptions.groupByFolder === false)
             ? artistPath
             : (looseAtRoot && scanOptions.treatArtistRootLooseTracksAsSingles !== false
               ? path.join(artistPath, '.crate', 'loose-tracks')
               : trackDir);
-          const albumKey = createAlbumKey(artistName, groupDir);
+
+          const discFolderName = path.basename(trackDir);
+          if (scanOptions.includeDiscSubfolders !== false && /^(disc|cd)\s*\d+/i.test(discFolderName)) {
+            groupDir = path.dirname(trackDir);
+          }
+
+          const albumKey = createAlbumKey(groupingArtist, `${albumGroupKey}`);
           if (!albumGroups.has(albumKey)) {
             albumGroups.set(albumKey, {
               title: looseAtRoot && scanOptions.treatArtistRootLooseTracksAsSingles !== false ? 'Loose Tracks' : albumName,

@@ -40,15 +40,19 @@ function normalizeSettings(row) {
     artworkCacheEnabled: Boolean(row.artworkCacheEnabled),
     artworkDefaultSize: row.artworkDefaultSize || 512,
     artworkFolderFilenames: String(row.artworkFolderFilenames || 'cover,folder,front,album').split(',').map((v) => v.trim()).filter(Boolean),
-    scanMaxDepth: Number.isInteger(row.scanMaxDepth) ? row.scanMaxDepth : 4,
+    scanMaxDepth: Number.isInteger(row.scanMaxDepth) ? row.scanMaxDepth : 3,
     scanIgnoreHiddenPaths: Boolean(row.scanIgnoreHiddenPaths),
     scanGroupByFolder: Boolean(row.scanGroupByFolder),
-    scanTreatArtistRootLooseTracksAsSingles: Boolean(row.scanTreatArtistRootLooseTracksAsSingles)
+    scanTreatArtistRootLooseTracksAsSingles: Boolean(row.scanTreatArtistRootLooseTracksAsSingles),
+    scanIncludeDiscSubfolders: row.scanIncludeDiscSubfolders === undefined ? true : Boolean(row.scanIncludeDiscSubfolders),
+    scanIncludeSingles: row.scanIncludeSingles === undefined ? true : Boolean(row.scanIncludeSingles),
+    scanTreatCompilationAsSeparate: row.scanTreatCompilationAsSeparate === undefined ? false : Boolean(row.scanTreatCompilationAsSeparate),
+    scanIgnoreFolderNames: String(row.scanIgnoreFolderNames || '.crate,_tmp,@eaDir').split(',').map((v) => v.trim()).filter(Boolean)
   };
 }
 
 function getSettings() {
-  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote, artworkPreferEmbedded, artworkPreferFolder, artworkCacheEnabled, artworkDefaultSize, artworkFolderFilenames, scanMaxDepth, scanIgnoreHiddenPaths, scanGroupByFolder, scanTreatArtistRootLooseTracksAsSingles FROM settings WHERE id = 1').get();
+  const row = db.prepare('SELECT accentColor, noiseOverlay, libraryPath, lastScanAt, lidarrEnabled, lidarrBaseUrl, lidarrApiKey, lidarrQualityProfileId, lidarrRootFolderPath, artworkPreferLocal, artworkAllowRemote, artworkPreferEmbedded, artworkPreferFolder, artworkCacheEnabled, artworkDefaultSize, artworkFolderFilenames, scanMaxDepth, scanIgnoreHiddenPaths, scanGroupByFolder, scanTreatArtistRootLooseTracksAsSingles, scanIncludeDiscSubfolders, scanIncludeSingles, scanTreatCompilationAsSeparate, scanIgnoreFolderNames FROM settings WHERE id = 1').get();
   return normalizeSettings(row);
 }
 
@@ -159,6 +163,23 @@ function validateSettings(payload) {
   if ('scanTreatArtistRootLooseTracksAsSingles' in payload) {
     if (typeof payload.scanTreatArtistRootLooseTracksAsSingles !== 'boolean') throw new Error('scanTreatArtistRootLooseTracksAsSingles must be boolean');
     out.scanTreatArtistRootLooseTracksAsSingles = payload.scanTreatArtistRootLooseTracksAsSingles;
+  }
+
+  if ('scanIncludeDiscSubfolders' in payload) {
+    if (typeof payload.scanIncludeDiscSubfolders !== 'boolean') throw new Error('scanIncludeDiscSubfolders must be boolean');
+    out.scanIncludeDiscSubfolders = payload.scanIncludeDiscSubfolders;
+  }
+  if ('scanIncludeSingles' in payload) {
+    if (typeof payload.scanIncludeSingles !== 'boolean') throw new Error('scanIncludeSingles must be boolean');
+    out.scanIncludeSingles = payload.scanIncludeSingles;
+  }
+  if ('scanTreatCompilationAsSeparate' in payload) {
+    if (typeof payload.scanTreatCompilationAsSeparate !== 'boolean') throw new Error('scanTreatCompilationAsSeparate must be boolean');
+    out.scanTreatCompilationAsSeparate = payload.scanTreatCompilationAsSeparate;
+  }
+  if ('scanIgnoreFolderNames' in payload) {
+    if (!Array.isArray(payload.scanIgnoreFolderNames)) throw new Error('scanIgnoreFolderNames must be string array');
+    out.scanIgnoreFolderNames = payload.scanIgnoreFolderNames.map((v) => String(v).trim()).filter(Boolean);
   }
   return out;
 }
@@ -360,7 +381,11 @@ app.get('/api/settings/scan', async () => {
     scanMaxDepth: settings.scanMaxDepth,
     scanIgnoreHiddenPaths: settings.scanIgnoreHiddenPaths,
     scanGroupByFolder: settings.scanGroupByFolder,
-    scanTreatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+    scanTreatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles,
+    scanIncludeDiscSubfolders: settings.scanIncludeDiscSubfolders,
+    scanIncludeSingles: settings.scanIncludeSingles,
+    scanTreatCompilationAsSeparate: settings.scanTreatCompilationAsSeparate,
+    scanIgnoreFolderNames: settings.scanIgnoreFolderNames
   };
 });
 
@@ -369,19 +394,27 @@ app.put('/api/settings/scan', async (req, reply) => {
     const next = validateSettings(req.body || {});
     db.prepare(`
       UPDATE settings
-      SET scanMaxDepth = ?, scanIgnoreHiddenPaths = ?, scanGroupByFolder = ?, scanTreatArtistRootLooseTracksAsSingles = ?
+      SET scanMaxDepth = ?, scanIgnoreHiddenPaths = ?, scanGroupByFolder = ?, scanTreatArtistRootLooseTracksAsSingles = ?, scanIncludeDiscSubfolders = ?, scanIncludeSingles = ?, scanTreatCompilationAsSeparate = ?, scanIgnoreFolderNames = ?
       WHERE id = 1
     `).run(
       next.scanMaxDepth,
       next.scanIgnoreHiddenPaths ? 1 : 0,
       next.scanGroupByFolder ? 1 : 0,
-      next.scanTreatArtistRootLooseTracksAsSingles ? 1 : 0
+      next.scanTreatArtistRootLooseTracksAsSingles ? 1 : 0,
+      next.scanIncludeDiscSubfolders ? 1 : 0,
+      next.scanIncludeSingles ? 1 : 0,
+      next.scanTreatCompilationAsSeparate ? 1 : 0,
+      (next.scanIgnoreFolderNames || []).join(',')
     );
     return {
       scanMaxDepth: next.scanMaxDepth,
       scanIgnoreHiddenPaths: next.scanIgnoreHiddenPaths,
       scanGroupByFolder: next.scanGroupByFolder,
-      scanTreatArtistRootLooseTracksAsSingles: next.scanTreatArtistRootLooseTracksAsSingles
+      scanTreatArtistRootLooseTracksAsSingles: next.scanTreatArtistRootLooseTracksAsSingles,
+      scanIncludeDiscSubfolders: next.scanIncludeDiscSubfolders,
+      scanIncludeSingles: next.scanIncludeSingles,
+      scanTreatCompilationAsSeparate: next.scanTreatCompilationAsSeparate,
+      scanIgnoreFolderNames: next.scanIgnoreFolderNames
     };
   } catch (error) {
     return reply.code(400).send({ error: error.message });
@@ -429,6 +462,26 @@ app.put('/api/settings/artwork', async (req, reply) => {
 });
 
 app.get('/api/stats', async () => getStats());
+app.get('/api/capabilities', async () => ({
+  canWriteTags: false,
+  artworkCaching: true,
+  repairCenter: true
+}));
+
+app.post('/api/debug/test-path-access', async (req, reply) => {
+  const targetPath = String(req.body?.path || '').trim();
+  if (!targetPath || !targetPath.startsWith('/')) {
+    return reply.code(400).send({ error: 'path must be absolute' });
+  }
+  try {
+    const stat = fs.statSync(targetPath);
+    fs.accessSync(targetPath, fs.constants.R_OK | fs.constants.X_OK);
+    return { readable: true, stat: { isDirectory: stat.isDirectory(), mode: stat.mode, uid: stat.uid, gid: stat.gid } };
+  } catch (error) {
+    return { readable: false, code: error.code || null, message: error.message || String(error) };
+  }
+});
+
 
 app.post('/api/scan/start', async (req, reply) => {
   const payload = req.body || {};
@@ -443,7 +496,11 @@ app.post('/api/scan/start', async (req, reply) => {
     artistId: Number.isInteger(payload.artistId) ? payload.artistId : null,
     ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
     groupByFolder: settings.scanGroupByFolder,
-    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles,
+    includeDiscSubfolders: settings.scanIncludeDiscSubfolders,
+    includeSingles: settings.scanIncludeSingles,
+    treatCompilationAsSeparate: settings.scanTreatCompilationAsSeparate,
+    ignoreFolderNames: settings.scanIgnoreFolderNames
   });
 });
 
@@ -460,7 +517,11 @@ app.post('/api/scan', async (req, reply) => {
     artistId: Number.isInteger(payload.artistId) ? payload.artistId : null,
     ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
     groupByFolder: settings.scanGroupByFolder,
-    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles,
+    includeDiscSubfolders: settings.scanIncludeDiscSubfolders,
+    includeSingles: settings.scanIncludeSingles,
+    treatCompilationAsSeparate: settings.scanTreatCompilationAsSeparate,
+    ignoreFolderNames: settings.scanIgnoreFolderNames
   });
 });
 
@@ -552,7 +613,11 @@ app.post('/api/scan/artist/:id/deep', async (req, reply) => {
     artistId,
     ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
     groupByFolder: settings.scanGroupByFolder,
-    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles,
+    includeDiscSubfolders: settings.scanIncludeDiscSubfolders,
+    includeSingles: settings.scanIncludeSingles,
+    treatCompilationAsSeparate: settings.scanTreatCompilationAsSeparate,
+    ignoreFolderNames: settings.scanIgnoreFolderNames
   });
 });
 
@@ -580,7 +645,11 @@ app.post('/api/artist/:id/scan/deep', async (req, reply) => {
     artistId,
     ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
     groupByFolder: settings.scanGroupByFolder,
-    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles,
+    includeDiscSubfolders: settings.scanIncludeDiscSubfolders,
+    includeSingles: settings.scanIncludeSingles,
+    treatCompilationAsSeparate: settings.scanTreatCompilationAsSeparate,
+    ignoreFolderNames: settings.scanIgnoreFolderNames
   });
 });
 
@@ -598,7 +667,11 @@ app.post('/api/library/rebuild', async (req, reply) => {
     maxDepth: settings.scanMaxDepth,
     ignoreHiddenPaths: settings.scanIgnoreHiddenPaths,
     groupByFolder: settings.scanGroupByFolder,
-    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles
+    treatArtistRootLooseTracksAsSingles: settings.scanTreatArtistRootLooseTracksAsSingles,
+    includeDiscSubfolders: settings.scanIncludeDiscSubfolders,
+    includeSingles: settings.scanIncludeSingles,
+    treatCompilationAsSeparate: settings.scanTreatCompilationAsSeparate,
+    ignoreFolderNames: settings.scanIgnoreFolderNames
   });
   return { ok: true };
 });
@@ -1136,6 +1209,62 @@ app.setNotFoundHandler((req, reply) => {
     return reply.code(404).send({ error: 'Not Found' });
   }
   return reply.sendFile('index.html');
+});
+
+app.get('/api/expected/missing', async (req, reply) => {
+  const page = Math.max(1, Number(req.query.page || 1));
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+  const offset = (page - 1) * limit;
+  const rows = db.prepare(`
+    SELECT ar.id AS artistId, ar.name AS artistName, ar.slug AS artistSlug, wa.id AS wantedId, wa.title, wa.year, wa.notes
+    FROM wanted_albums wa
+    JOIN artists ar ON ar.id = wa.artistId
+    LEFT JOIN albums al ON al.artistId = wa.artistId AND lower(al.title) = lower(wa.title) AND al.deleted = 0
+    WHERE al.id IS NULL
+    ORDER BY ar.name ASC, wa.title ASC
+    LIMIT ? OFFSET ?
+  `).all(limit, offset);
+  const total = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM wanted_albums wa
+    JOIN artists ar ON ar.id = wa.artistId
+    LEFT JOIN albums al ON al.artistId = wa.artistId AND lower(al.title) = lower(wa.title) AND al.deleted = 0
+    WHERE al.id IS NULL
+  `).get().c;
+  return { items: rows, total, page, limit };
+});
+
+app.post('/api/repair/tag_mismatch', async (req) => ({
+  ok: true,
+  queued: false,
+  message: 'Tag writing not enabled in this build',
+  received: req.body || {}
+}));
+
+app.post('/api/repair/fill_missing_tags', async (req) => ({
+  ok: true,
+  queued: false,
+  message: 'Tag writing not enabled in this build',
+  received: req.body || {}
+}));
+
+app.post('/api/library/adopt-folder', async (req, reply) => {
+  const artistId = Number(req.body?.artistId);
+  const folderPath = String(req.body?.folderPath || '').trim();
+  if (!Number.isInteger(artistId) || artistId < 1) return reply.code(400).send({ error: 'artistId must be positive integer' });
+  if (!folderPath || !folderPath.startsWith('/')) return reply.code(400).send({ error: 'folderPath must be absolute' });
+
+  const artist = db.prepare('SELECT id, name FROM artists WHERE id = ?').get(artistId);
+  if (!artist) return reply.code(404).send({ error: 'Artist not found' });
+
+  const albumTitle = path.basename(folderPath).replace(/\s*\((19\d{2}|20\d{2})\)\s*$/, '').trim();
+  const seenAt = new Date().toISOString();
+  const res = db.prepare(`
+    INSERT INTO albums(artistId, title, path, pathDir, albumKey, firstSeen, lastSeen, deleted)
+    VALUES(?, ?, ?, ?, ?, ?, ?, 0)
+    ON CONFLICT(path) DO UPDATE SET title=excluded.title, lastSeen=excluded.lastSeen, deleted=0
+  `).run(artistId, albumTitle || 'Adopted Album', folderPath, folderPath, `adopt:${artistId}:${folderPath.toLowerCase()}`, seenAt, seenAt);
+  return { ok: true, albumId: res.lastInsertRowid || null, title: albumTitle || 'Adopted Album' };
 });
 
 app.listen({ port: PORT, host: HOST }).catch((error) => {

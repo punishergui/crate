@@ -107,6 +107,10 @@ function migrationV1(db) {
   ensureColumn(db, 'settings', 'scanIgnoreHiddenPaths', 'ALTER TABLE settings ADD COLUMN scanIgnoreHiddenPaths INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'settings', 'scanGroupByFolder', 'ALTER TABLE settings ADD COLUMN scanGroupByFolder INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'settings', 'scanTreatArtistRootLooseTracksAsSingles', 'ALTER TABLE settings ADD COLUMN scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'scanIncludeDiscSubfolders', 'ALTER TABLE settings ADD COLUMN scanIncludeDiscSubfolders INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'scanIncludeSingles', 'ALTER TABLE settings ADD COLUMN scanIncludeSingles INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'scanTreatCompilationAsSeparate', 'ALTER TABLE settings ADD COLUMN scanTreatCompilationAsSeparate INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'settings', 'scanIgnoreFolderNames', "ALTER TABLE settings ADD COLUMN scanIgnoreFolderNames TEXT NOT NULL DEFAULT '.crate,_tmp,@eaDir'");
 
   ensureColumn(db, 'scan_state', 'skippedFiles', 'ALTER TABLE scan_state ADD COLUMN skippedFiles INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'scan_state', 'skippedReasonsJson', "ALTER TABLE scan_state ADD COLUMN skippedReasonsJson TEXT NOT NULL DEFAULT '{}'");
@@ -200,10 +204,14 @@ function initDb(options = {}) {
       artworkCacheEnabled INTEGER NOT NULL DEFAULT 1,
       artworkDefaultSize INTEGER NOT NULL DEFAULT 512,
       artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album',
-      scanMaxDepth INTEGER NOT NULL DEFAULT 4,
+      scanMaxDepth INTEGER NOT NULL DEFAULT 3,
       scanIgnoreHiddenPaths INTEGER NOT NULL DEFAULT 1,
       scanGroupByFolder INTEGER NOT NULL DEFAULT 1,
-      scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1
+      scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1,
+      scanIncludeDiscSubfolders INTEGER NOT NULL DEFAULT 1,
+      scanIncludeSingles INTEGER NOT NULL DEFAULT 1,
+      scanTreatCompilationAsSeparate INTEGER NOT NULL DEFAULT 0,
+      scanIgnoreFolderNames TEXT NOT NULL DEFAULT '.crate,_tmp,@eaDir'
     );
 
     CREATE TABLE IF NOT EXISTS artists (
@@ -403,7 +411,7 @@ function initDb(options = {}) {
     throw wrapMigrationErrors(error);
   }
 
-  db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();
+  db.prepare("INSERT OR IGNORE INTO settings (id, scanIgnoreFolderNames) VALUES (1, '.crate,_tmp,@eaDir')").run();
   db.prepare('INSERT OR IGNORE INTO scan_state (id) VALUES (1)').run();
   return db;
 }

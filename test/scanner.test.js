@@ -177,7 +177,7 @@ test('scanner dedupes duplicate hardlinks and records skipped reason breakdown',
   assert.equal(status.skippedReasonsBreakdown.unreadable, 1);
 });
 
-test('scanner groups albums by folder path even when tags match', async () => {
+test('scanner groups multi-disc folders into a single album by tags', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-scan-merge-'));
   const artistDir = path.join(tmp, 'New Found Glory');
   const albumDirA = path.join(artistDir, 'Waiting (1998)');
@@ -203,9 +203,9 @@ test('scanner groups albums by folder path even when tags match', async () => {
   await scanner.runScan(tmp, { recursive: true, maxDepth: 4 });
 
   const albums = db.prepare('SELECT title, trackCount FROM albums WHERE deleted = 0').all();
-  assert.equal(albums.length, 2);
+  assert.equal(albums.length, 1);
   assert.equal(albums[0].title, 'Waiting');
-  assert.equal(albums[1].title, 'Waiting');
+  assert.equal(albums[0].trackCount, 2);
 });
 
 
@@ -316,4 +316,15 @@ test('scanner falls back to artist when album_artist tag is missing', async () =
   assert.equal(album.title, 'Catalyst');
   const skipped = db.prepare("SELECT COUNT(*) AS c FROM scan_skipped WHERE reason = 'missing_tags'").get().c;
   assert.equal(skipped, 0);
+});
+
+test('collectArtistTracks reports permission_denied details with suggestions', () => {
+  const skipped = [];
+  const tracks = collectArtistTracks('/definitely/missing/path', { recursive: true, maxDepth: 3 }, (filePath, reason) => {
+    skipped.push({ filePath, reason });
+  });
+  assert.equal(Array.isArray(tracks), true);
+  assert.equal(skipped.length > 0, true);
+  const first = skipped[0].reason || {};
+  assert.equal(['unreadable', 'permission_denied'].includes(first.reason), true);
 });

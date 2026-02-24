@@ -66,3 +66,31 @@ html[data-theme='slate'] {
   --mutedText: var(--muted);
   --focusRing: var(--focus);
 }
+
+html[data-theme='steel-smoke'] {
+  --bg: #0f1218;
+  --surface: #1b212b;
+  --surface2: #252d39;
+  --text: #edf2f8;
+  --muted: #98a6bb;
+  --border: #2d3746;
+  --accent: #8fa1b8;
+  --accent2: #c5ced9;
+  --glow: 0 0 12px rgb(197 206 217 / 20%);
+  --focus: #cfd8e2;
+  --accentGlow: rgb(197 206 217 / 18%);
+}
+
+html[data-theme='warm-tube-glow'] {
+  --bg: #14100d;
+  --surface: #221915;
+  --surface2: #2b211b;
+  --text: #f6eee8;
+  --muted: #c3a892;
+  --border: #3d2f27;
+  --accent: #ffb15a;
+  --accent2: #ffd48a;
+  --glow: 0 0 16px rgb(255 177 90 / 26%);
+  --focus: #ffd39a;
+  --accentGlow: rgb(255 212 138 / 20%);
+}
