@@ -61,7 +61,11 @@ function initDb() {
       artworkPreferFolder INTEGER NOT NULL DEFAULT 1,
       artworkCacheEnabled INTEGER NOT NULL DEFAULT 1,
       artworkDefaultSize INTEGER NOT NULL DEFAULT 512,
-      artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album'
+      artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album',
+      scanMaxDepth INTEGER NOT NULL DEFAULT 4,
+      scanIgnoreHiddenPaths INTEGER NOT NULL DEFAULT 1,
+      scanGroupByFolder INTEGER NOT NULL DEFAULT 1,
+      scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS artists (
@@ -78,6 +82,8 @@ function initDb() {
       artistId INTEGER NOT NULL,
       title TEXT NOT NULL,
       path TEXT NOT NULL UNIQUE,
+      pathDir TEXT,
+      albumKey TEXT,
       firstSeen TEXT NOT NULL,
       lastSeen TEXT NOT NULL,
       lastFileMtime INTEGER,
@@ -240,6 +246,7 @@ function initDb() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_albums_artist_deleted ON albums(artistId, deleted);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_album_key_unique ON albums(albumKey);
     CREATE INDEX IF NOT EXISTS idx_expected_artists_artist_id ON expected_artists(artistId);
     CREATE INDEX IF NOT EXISTS idx_file_index_inode ON file_index(inodeKey);
     CREATE INDEX IF NOT EXISTS idx_file_index_hash ON file_index(fileHash);
@@ -317,6 +324,27 @@ function initDb() {
   if (!settingsColumns.some((column) => column.name === 'artworkFolderFilenames')) {
     db.exec("ALTER TABLE settings ADD COLUMN artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album'");
   }
+  if (!settingsColumns.some((column) => column.name === 'scanMaxDepth')) {
+    db.exec('ALTER TABLE settings ADD COLUMN scanMaxDepth INTEGER NOT NULL DEFAULT 4');
+  }
+  if (!settingsColumns.some((column) => column.name === 'scanIgnoreHiddenPaths')) {
+    db.exec('ALTER TABLE settings ADD COLUMN scanIgnoreHiddenPaths INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!settingsColumns.some((column) => column.name === 'scanGroupByFolder')) {
+    db.exec('ALTER TABLE settings ADD COLUMN scanGroupByFolder INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!settingsColumns.some((column) => column.name === 'scanTreatArtistRootLooseTracksAsSingles')) {
+    db.exec('ALTER TABLE settings ADD COLUMN scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1');
+  }
+
+  const albumsColumns = db.prepare('PRAGMA table_info(albums)').all();
+  if (!albumsColumns.some((column) => column.name === 'pathDir')) {
+    db.exec('ALTER TABLE albums ADD COLUMN pathDir TEXT');
+  }
+  if (!albumsColumns.some((column) => column.name === 'albumKey')) {
+    db.exec('ALTER TABLE albums ADD COLUMN albumKey TEXT');
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_album_key_unique ON albums(albumKey)');
 
   const scanStateColumns = db.prepare('PRAGMA table_info(scan_state)').all();
   if (!scanStateColumns.some((column) => column.name === 'skippedFiles')) {

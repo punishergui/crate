@@ -42,7 +42,8 @@ async function request(url, options) {
 
 const api = {
   get: (url) => request(url),
-  post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  post: (url, body = {}) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  put: (url, body = {}) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 };
 
 const NAV_ITEMS = [
@@ -51,7 +52,8 @@ const NAV_ITEMS = [
   { to: '/scan-report', label: 'Scan Report' },
   { to: '/settings/themes', label: 'Themes' },
   { to: '/settings/appearance', label: 'Appearance' },
-  { to: '/settings/artwork', label: 'Artwork' }
+  { to: '/settings/artwork', label: 'Artwork' },
+  { to: '/settings/scan', label: 'Library Scan' }
 ];
 
 const REASONS = ['missing_tags', 'tag_mismatch', 'unsupported_extension', 'hidden_path', 'permission_denied', 'unreadable'];
@@ -237,6 +239,30 @@ function AppearanceSettingsPage({ uiSettings, setUiSettings }) {
   </div></div></section>;
 }
 
+
+
+function ScanSettingsPage({ scanSettings, setScanSettings }) {
+  const [status, setStatus] = React.useState('');
+  const patch = (next) => setScanSettings((prev) => ({ ...prev, ...next }));
+  const save = async () => {
+    const payload = await api.put('/api/settings/scan', scanSettings).catch((error) => ({ error: error.message }));
+    if (payload?.error) {
+      setStatus(payload.error);
+      return;
+    }
+    setScanSettings(payload);
+    setStatus('Saved');
+  };
+  return <section className="page-stack"><h1>Library Scan</h1><div className="app-card"><div className="filters-row">
+    <label>Scan subfolders<select value={scanSettings.scanGroupByFolder ? 'on' : 'off'} onChange={(e) => patch({ scanGroupByFolder: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Scan depth<select value={scanSettings.scanMaxDepth} onChange={(e) => patch({ scanMaxDepth: Number(e.target.value) })}>{[2,3,4,5,6,7,8].map((v) => <option key={v} value={v}>{v}</option>)}</select></label>
+    <label>Ignore hidden folders<select value={scanSettings.scanIgnoreHiddenPaths ? 'on' : 'off'} onChange={(e) => patch({ scanIgnoreHiddenPaths: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+  </div><div className="filters-row">
+    <label>Root loose tracks as singles<select value={scanSettings.scanTreatArtistRootLooseTracksAsSingles ? 'on' : 'off'} onChange={(e) => patch({ scanTreatArtistRootLooseTracksAsSingles: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <button className="btn btn-accent" onClick={save}>Save Scan Settings</button>
+  </div>{status ? <p className="muted">{status}</p> : null}</div></section>;
+}
+
 function PlaceholderPage({ title, text }) { return <section className="page-stack"><h1>{title}</h1><AppCard title={title}><p>{text}</p></AppCard></section>; }
 
 function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
@@ -270,9 +296,11 @@ function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
 function App() {
   const [scanStatus, setScanStatus] = useScanStatusPolling();
   const [uiSettings, setUiSettings] = React.useState(getUiArtSettings);
+  const [scanSettings, setScanSettings] = React.useState({ scanMaxDepth: 4, scanIgnoreHiddenPaths: true, scanGroupByFolder: true, scanTreatArtistRootLooseTracksAsSingles: true });
   useArtHover(uiSettings.hoverPopout);
   React.useEffect(() => { applyUiArtSettings(uiSettings); localStorage.setItem(UI_ART_KEY, JSON.stringify(uiSettings)); }, [uiSettings]);
-  const startScan = React.useCallback(async () => { const payload = await api.post('/api/scan/start'); if (payload?.status) setScanStatus(payload.status); return payload; }, [setScanStatus]);
+  React.useEffect(() => { api.get('/api/settings/scan').then((payload) => setScanSettings(payload)).catch(() => null); }, []);
+  const startScan = React.useCallback(async () => { const payload = await api.post('/api/scan/start', { maxDepth: scanSettings.scanMaxDepth }); if (payload?.status) setScanStatus(payload.status); return payload; }, [setScanStatus, scanSettings.scanMaxDepth]);
 
   return <div className="app-shell"><aside className="sidebar"><div className="brand">CRATE</div><nav className="nav-list">{NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}</nav></aside>
     <main className="content"><TopBar scanStatus={scanStatus} onScan={startScan} /><Routes>
@@ -282,6 +310,7 @@ function App() {
       <Route path="/settings/themes" element={<ThemesSettingsPage />} />
       <Route path="/settings/appearance" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
       <Route path="/settings/artwork" element={<ArtworkSettingsPage />} />
+      <Route path="/settings/scan" element={<ScanSettingsPage scanSettings={scanSettings} setScanSettings={setScanSettings} />} />
       <Route path="/concerts" element={<PlaceholderPage title="Concerts" text="Concert events and locations will appear here." />} />
       <Route path="/releases" element={<PlaceholderPage title="Releases" text="New and upcoming releases feed." />} />
       <Route path="/downloads" element={<PlaceholderPage title="Downloads" text="Soulseek download queue and history." />} />
