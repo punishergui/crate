@@ -7,6 +7,7 @@ const DATA_DIR = '/data';
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const DB_PATH = path.join(DATA_DIR, 'crate.sqlite');
+const LATEST_SCHEMA_VERSION = 2;
 
 function ensureDataDirs() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -24,13 +25,8 @@ function buildArtistSlug(db, name, rowId = null) {
 }
 
 function ensureArtistSlugs(db) {
-  const artistColumns = db.prepare('PRAGMA table_info(artists)').all();
-  const hasSlugColumn = artistColumns.some((column) => column.name === 'slug');
-  if (!hasSlugColumn) {
-    db.exec('ALTER TABLE artists ADD COLUMN slug TEXT');
-  }
-
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_artists_slug_unique ON artists(slug)');
+  ensureColumn(db, 'artists', 'slug', 'ALTER TABLE artists ADD COLUMN slug TEXT');
+  ensureIndex(db, 'idx_artists_slug_unique', 'CREATE UNIQUE INDEX idx_artists_slug_unique ON artists(slug)');
 
   const withoutSlug = db.prepare("SELECT id, name FROM artists WHERE slug IS NULL OR slug = ''").all();
   const updateSlug = db.prepare('UPDATE artists SET slug = ? WHERE id = ?');
@@ -39,9 +35,131 @@ function ensureArtistSlugs(db) {
   }
 }
 
-function initDb() {
+function hasColumn(db, table, column) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  return columns.some((entry) => entry.name === column);
+}
+
+function ensureColumn(db, table, column, ddl) {
+  if (!hasColumn(db, table, column)) {
+    db.exec(ddl);
+    return true;
+  }
+  return false;
+}
+
+function hasIndex(db, name) {
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?").get(name);
+  return Boolean(row);
+}
+
+function ensureIndex(db, name, ddl) {
+  if (!hasIndex(db, name)) {
+    db.exec(ddl);
+    return true;
+  }
+  return false;
+}
+
+function readSchemaVersion(db) {
+  const row = db.pragma('user_version', { simple: true });
+  return Number.isInteger(row) ? row : 0;
+}
+
+function setSchemaVersion(db, version) {
+  db.pragma(`user_version = ${version}`);
+}
+
+function migrationV1(db) {
+  ensureArtistSlugs(db);
+  ensureColumn(db, 'albums', 'owned', 'ALTER TABLE albums ADD COLUMN owned INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'albums', 'pathDir', 'ALTER TABLE albums ADD COLUMN pathDir TEXT');
+  ensureColumn(db, 'albums', 'albumKey', 'ALTER TABLE albums ADD COLUMN albumKey TEXT');
+  ensureIndex(db, 'idx_albums_artist_deleted', 'CREATE INDEX idx_albums_artist_deleted ON albums(artistId, deleted)');
+  ensureIndex(db, 'idx_albums_album_key_unique', 'CREATE UNIQUE INDEX idx_albums_album_key_unique ON albums(albumKey)');
+
+  ensureColumn(db, 'expected_albums', 'primaryType', 'ALTER TABLE expected_albums ADD COLUMN primaryType TEXT');
+  ensureColumn(db, 'expected_albums', 'secondaryTypesJson', "ALTER TABLE expected_albums ADD COLUMN secondaryTypesJson TEXT NOT NULL DEFAULT '[]'");
+
+  const hasExpectedIgnoredLegacy = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get('expected_ignored');
+  if (hasExpectedIgnoredLegacy) {
+    db.exec(`
+      INSERT OR IGNORE INTO expected_ignored_albums (artistId, expectedAlbumId, createdAt)
+      SELECT artistId, expectedAlbumId, createdAt
+      FROM expected_ignored
+    `);
+    db.exec('DROP TABLE expected_ignored');
+  }
+
+  ensureColumn(db, 'settings', 'lidarrEnabled', 'ALTER TABLE settings ADD COLUMN lidarrEnabled INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'settings', 'lidarrBaseUrl', "ALTER TABLE settings ADD COLUMN lidarrBaseUrl TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'settings', 'lidarrApiKey', "ALTER TABLE settings ADD COLUMN lidarrApiKey TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'settings', 'lidarrQualityProfileId', 'ALTER TABLE settings ADD COLUMN lidarrQualityProfileId INTEGER');
+  ensureColumn(db, 'settings', 'lidarrRootFolderPath', 'ALTER TABLE settings ADD COLUMN lidarrRootFolderPath TEXT');
+  ensureColumn(db, 'settings', 'artworkPreferLocal', 'ALTER TABLE settings ADD COLUMN artworkPreferLocal INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'artworkAllowRemote', 'ALTER TABLE settings ADD COLUMN artworkAllowRemote INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'settings', 'artworkPreferEmbedded', 'ALTER TABLE settings ADD COLUMN artworkPreferEmbedded INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'artworkPreferFolder', 'ALTER TABLE settings ADD COLUMN artworkPreferFolder INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'artworkCacheEnabled', 'ALTER TABLE settings ADD COLUMN artworkCacheEnabled INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'artworkDefaultSize', 'ALTER TABLE settings ADD COLUMN artworkDefaultSize INTEGER NOT NULL DEFAULT 512');
+  ensureColumn(db, 'settings', 'artworkFolderFilenames', "ALTER TABLE settings ADD COLUMN artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album'");
+  ensureColumn(db, 'settings', 'scanMaxDepth', 'ALTER TABLE settings ADD COLUMN scanMaxDepth INTEGER NOT NULL DEFAULT 4');
+  ensureColumn(db, 'settings', 'scanIgnoreHiddenPaths', 'ALTER TABLE settings ADD COLUMN scanIgnoreHiddenPaths INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'scanGroupByFolder', 'ALTER TABLE settings ADD COLUMN scanGroupByFolder INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'settings', 'scanTreatArtistRootLooseTracksAsSingles', 'ALTER TABLE settings ADD COLUMN scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1');
+
+  ensureColumn(db, 'scan_state', 'skippedFiles', 'ALTER TABLE scan_state ADD COLUMN skippedFiles INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'scan_state', 'skippedReasonsJson', "ALTER TABLE scan_state ADD COLUMN skippedReasonsJson TEXT NOT NULL DEFAULT '{}'");
+
+  ensureColumn(db, 'scan_skipped', 'ext', 'ALTER TABLE scan_skipped ADD COLUMN ext TEXT');
+  ensureColumn(db, 'scan_skipped', 'message', 'ALTER TABLE scan_skipped ADD COLUMN message TEXT');
+  ensureColumn(db, 'scan_skipped', 'detailsJson', 'ALTER TABLE scan_skipped ADD COLUMN detailsJson TEXT');
+  ensureIndex(db, 'idx_scan_skipped_reason_created', 'CREATE INDEX idx_scan_skipped_reason_created ON scan_skipped(reason, createdAt DESC)');
+  ensureIndex(db, 'idx_scan_skipped_ext', 'CREATE INDEX idx_scan_skipped_ext ON scan_skipped(ext)');
+
+  ensureColumn(db, 'file_index', 'lastSeenAt', 'ALTER TABLE file_index ADD COLUMN lastSeenAt TEXT');
+  ensureColumn(db, 'file_index', 'inode', 'ALTER TABLE file_index ADD COLUMN inode INTEGER');
+  ensureColumn(db, 'file_index', 'device', 'ALTER TABLE file_index ADD COLUMN device INTEGER');
+}
+
+function migrationV2(db) {
+  ensureIndex(db, 'idx_expected_artists_artist_id', 'CREATE INDEX idx_expected_artists_artist_id ON expected_artists(artistId)');
+  ensureIndex(db, 'idx_file_index_inode', 'CREATE INDEX idx_file_index_inode ON file_index(inodeKey)');
+  ensureIndex(db, 'idx_file_index_hash', 'CREATE INDEX idx_file_index_hash ON file_index(fileHash)');
+  ensureIndex(db, 'idx_expected_artists_artist_unique', 'CREATE UNIQUE INDEX idx_expected_artists_artist_unique ON expected_artists(artistId)');
+  ensureIndex(db, 'idx_expected_albums_expected_artist_id', 'CREATE INDEX idx_expected_albums_expected_artist_id ON expected_albums(expectedArtistId)');
+  ensureIndex(db, 'idx_expected_albums_release_group_unique', 'CREATE UNIQUE INDEX idx_expected_albums_release_group_unique ON expected_albums(expectedArtistId, mb_release_group_id)');
+  ensureIndex(db, 'idx_expected_albums_normalized_title', 'CREATE INDEX idx_expected_albums_normalized_title ON expected_albums(expectedArtistId, normalizedTitle)');
+  ensureIndex(db, 'idx_wishlist_status', 'CREATE INDEX idx_wishlist_status ON wishlist_albums(status)');
+}
+
+const MIGRATIONS = [migrationV1, migrationV2];
+
+function runMigrations(db) {
+  const startingVersion = readSchemaVersion(db);
+  for (let index = startingVersion; index < MIGRATIONS.length; index += 1) {
+    const migration = MIGRATIONS[index];
+    const nextVersion = index + 1;
+    db.transaction(() => {
+      migration(db);
+      setSchemaVersion(db, nextVersion);
+    })();
+  }
+}
+
+function wrapMigrationErrors(error) {
+  if (error && typeof error.message === 'string' && error.message.includes('readonly')) {
+    const wrapped = new Error(`Database schema migration failed because the database is read-only: ${error.message}`);
+    wrapped.cause = error;
+    return wrapped;
+  }
+  return error;
+}
+
+function initDb(options = {}) {
+  const dbPath = options.dbPath || DB_PATH;
   ensureDataDirs();
-  const db = new Database(DB_PATH);
+  const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -244,142 +362,11 @@ function initDb() {
       finishedAt INTEGER,
       error TEXT
     );
-
-    CREATE INDEX IF NOT EXISTS idx_albums_artist_deleted ON albums(artistId, deleted);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_album_key_unique ON albums(albumKey);
-    CREATE INDEX IF NOT EXISTS idx_expected_artists_artist_id ON expected_artists(artistId);
-    CREATE INDEX IF NOT EXISTS idx_file_index_inode ON file_index(inodeKey);
-    CREATE INDEX IF NOT EXISTS idx_file_index_hash ON file_index(fileHash);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_expected_artists_artist_unique ON expected_artists(artistId);
-    CREATE INDEX IF NOT EXISTS idx_expected_albums_expected_artist_id ON expected_albums(expectedArtistId);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_expected_albums_release_group_unique ON expected_albums(expectedArtistId, mb_release_group_id);
-    CREATE INDEX IF NOT EXISTS idx_expected_albums_normalized_title ON expected_albums(expectedArtistId, normalizedTitle);
-    CREATE INDEX IF NOT EXISTS idx_wishlist_status ON wishlist_albums(status);
   `);
-
-  ensureArtistSlugs(db);
-
-  const albumColumns = db.prepare('PRAGMA table_info(albums)').all();
-  const hasOwnedColumn = albumColumns.some((column) => column.name === 'owned');
-  if (!hasOwnedColumn) {
-    db.exec('ALTER TABLE albums ADD COLUMN owned INTEGER NOT NULL DEFAULT 1');
-  }
-
-
-  const expectedAlbumColumns = db.prepare('PRAGMA table_info(expected_albums)').all();
-  if (!expectedAlbumColumns.some((column) => column.name === 'primaryType')) {
-    db.exec('ALTER TABLE expected_albums ADD COLUMN primaryType TEXT');
-  }
-  if (!expectedAlbumColumns.some((column) => column.name === 'secondaryTypesJson')) {
-    db.exec("ALTER TABLE expected_albums ADD COLUMN secondaryTypesJson TEXT NOT NULL DEFAULT '[]'");
-  }
-
-  const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?");
-  const hasExpectedIgnoredLegacy = tableExists.get('expected_ignored');
-  if (hasExpectedIgnoredLegacy) {
-    db.exec(`
-      INSERT OR IGNORE INTO expected_ignored_albums (artistId, expectedAlbumId, createdAt)
-      SELECT artistId, expectedAlbumId, createdAt
-      FROM expected_ignored
-    `);
-    db.exec('DROP TABLE expected_ignored');
-  }
-
-
-  const settingsColumns = db.prepare('PRAGMA table_info(settings)').all();
-  if (!settingsColumns.some((column) => column.name === 'lidarrEnabled')) {
-    db.exec('ALTER TABLE settings ADD COLUMN lidarrEnabled INTEGER NOT NULL DEFAULT 0');
-  }
-  if (!settingsColumns.some((column) => column.name === 'lidarrBaseUrl')) {
-    db.exec("ALTER TABLE settings ADD COLUMN lidarrBaseUrl TEXT NOT NULL DEFAULT ''");
-  }
-  if (!settingsColumns.some((column) => column.name === 'lidarrApiKey')) {
-    db.exec("ALTER TABLE settings ADD COLUMN lidarrApiKey TEXT NOT NULL DEFAULT ''");
-  }
-  if (!settingsColumns.some((column) => column.name === 'lidarrQualityProfileId')) {
-    db.exec('ALTER TABLE settings ADD COLUMN lidarrQualityProfileId INTEGER');
-  }
-  if (!settingsColumns.some((column) => column.name === 'lidarrRootFolderPath')) {
-    db.exec('ALTER TABLE settings ADD COLUMN lidarrRootFolderPath TEXT');
-  }
-  if (!settingsColumns.some((column) => column.name === 'artworkPreferLocal')) {
-    db.exec('ALTER TABLE settings ADD COLUMN artworkPreferLocal INTEGER NOT NULL DEFAULT 1');
-  }
-  if (!settingsColumns.some((column) => column.name === 'artworkAllowRemote')) {
-    db.exec('ALTER TABLE settings ADD COLUMN artworkAllowRemote INTEGER NOT NULL DEFAULT 0');
-  }
-
-  if (!settingsColumns.some((column) => column.name === 'artworkPreferEmbedded')) {
-    db.exec('ALTER TABLE settings ADD COLUMN artworkPreferEmbedded INTEGER NOT NULL DEFAULT 1');
-  }
-  if (!settingsColumns.some((column) => column.name === 'artworkPreferFolder')) {
-    db.exec('ALTER TABLE settings ADD COLUMN artworkPreferFolder INTEGER NOT NULL DEFAULT 1');
-  }
-  if (!settingsColumns.some((column) => column.name === 'artworkCacheEnabled')) {
-    db.exec('ALTER TABLE settings ADD COLUMN artworkCacheEnabled INTEGER NOT NULL DEFAULT 1');
-  }
-  if (!settingsColumns.some((column) => column.name === 'artworkDefaultSize')) {
-    db.exec('ALTER TABLE settings ADD COLUMN artworkDefaultSize INTEGER NOT NULL DEFAULT 512');
-  }
-  if (!settingsColumns.some((column) => column.name === 'artworkFolderFilenames')) {
-    db.exec("ALTER TABLE settings ADD COLUMN artworkFolderFilenames TEXT NOT NULL DEFAULT 'cover,folder,front,album'");
-  }
-  if (!settingsColumns.some((column) => column.name === 'scanMaxDepth')) {
-    db.exec('ALTER TABLE settings ADD COLUMN scanMaxDepth INTEGER NOT NULL DEFAULT 4');
-  }
-  if (!settingsColumns.some((column) => column.name === 'scanIgnoreHiddenPaths')) {
-    db.exec('ALTER TABLE settings ADD COLUMN scanIgnoreHiddenPaths INTEGER NOT NULL DEFAULT 1');
-  }
-  if (!settingsColumns.some((column) => column.name === 'scanGroupByFolder')) {
-    db.exec('ALTER TABLE settings ADD COLUMN scanGroupByFolder INTEGER NOT NULL DEFAULT 1');
-  }
-  if (!settingsColumns.some((column) => column.name === 'scanTreatArtistRootLooseTracksAsSingles')) {
-    db.exec('ALTER TABLE settings ADD COLUMN scanTreatArtistRootLooseTracksAsSingles INTEGER NOT NULL DEFAULT 1');
-  }
-
-  const albumsColumns = db.prepare('PRAGMA table_info(albums)').all();
-  if (!albumsColumns.some((column) => column.name === 'pathDir')) {
-    db.exec('ALTER TABLE albums ADD COLUMN pathDir TEXT');
-  }
-  if (!albumsColumns.some((column) => column.name === 'albumKey')) {
-    db.exec('ALTER TABLE albums ADD COLUMN albumKey TEXT');
-  }
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_album_key_unique ON albums(albumKey)');
-
-  const scanStateColumns = db.prepare('PRAGMA table_info(scan_state)').all();
-  if (!scanStateColumns.some((column) => column.name === 'skippedFiles')) {
-    db.exec('ALTER TABLE scan_state ADD COLUMN skippedFiles INTEGER NOT NULL DEFAULT 0');
-  }
-  if (!scanStateColumns.some((column) => column.name === 'skippedReasonsJson')) {
-    db.exec("ALTER TABLE scan_state ADD COLUMN skippedReasonsJson TEXT NOT NULL DEFAULT '{}'");
-  }
-
-
-  const scanSkippedColumns = db.prepare('PRAGMA table_info(scan_skipped)').all();
-  if (!scanSkippedColumns.some((column) => column.name === 'ext')) {
-    db.exec('ALTER TABLE scan_skipped ADD COLUMN ext TEXT');
-  }
-  if (!scanSkippedColumns.some((column) => column.name === 'message')) {
-    db.exec('ALTER TABLE scan_skipped ADD COLUMN message TEXT');
-  }
-  if (!scanSkippedColumns.some((column) => column.name === 'detailsJson')) {
-    db.exec('ALTER TABLE scan_skipped ADD COLUMN detailsJson TEXT');
-  }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_scan_skipped_reason_created ON scan_skipped(reason, createdAt DESC)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_scan_skipped_ext ON scan_skipped(ext)');
-
-
-  const fileIndexColumns = db.prepare('PRAGMA table_info(file_index)').all();
-  if (!fileIndexColumns.some((column) => column.name === 'lastSeenAt')) {
-    db.exec('ALTER TABLE file_index ADD COLUMN lastSeenAt TEXT');
-  }
-
-
-  if (!fileIndexColumns.some((column) => column.name === 'inode')) {
-    db.exec('ALTER TABLE file_index ADD COLUMN inode INTEGER');
-  }
-  if (!fileIndexColumns.some((column) => column.name === 'device')) {
-    db.exec('ALTER TABLE file_index ADD COLUMN device INTEGER');
+  try {
+    runMigrations(db);
+  } catch (error) {
+    throw wrapMigrationErrors(error);
   }
 
   db.prepare('INSERT OR IGNORE INTO settings (id) VALUES (1)').run();
@@ -387,4 +374,12 @@ function initDb() {
   return db;
 }
 
-module.exports = { initDb, DB_PATH, ensureDataDirs };
+module.exports = {
+  initDb,
+  DB_PATH,
+  ensureDataDirs,
+  hasColumn,
+  ensureColumn,
+  ensureIndex,
+  LATEST_SCHEMA_VERSION
+};
