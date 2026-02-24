@@ -337,7 +337,7 @@ function collectArtistTracks(artistPath, { recursive = true, maxDepth = 3, ignor
 
     if (!isAudioFileName(fullPath)) {
       const ext = path.extname(fullPath).toLowerCase();
-      if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+      if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.lrc', '.nfo'].includes(ext)) {
         onSkip?.(fullPath, `ignored_non_audio:${ext || 'none'}`);
       } else {
         onSkip?.(fullPath, `unsupported-extension:${ext || 'none'}`);

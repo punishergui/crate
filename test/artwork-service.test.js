@@ -21,10 +21,11 @@ function dbForArtwork(tmpDir) {
     );
     INSERT INTO settings(id, artworkPreferEmbedded, artworkPreferFolder, artworkAllowRemote, artworkCacheEnabled, artworkDefaultSize, artworkFolderFilenames)
     VALUES(1, 1, 1, 0, 1, 512, 'cover,folder,front,album');
-    CREATE TABLE artists (id INTEGER PRIMARY KEY, name TEXT, deleted INTEGER DEFAULT 0);
-    CREATE TABLE albums (id INTEGER PRIMARY KEY, artistId INTEGER, title TEXT, path TEXT, deleted INTEGER DEFAULT 0, lastFileMtime INTEGER);
+    CREATE TABLE artists (id INTEGER PRIMARY KEY, name TEXT, artworkSource TEXT DEFAULT 'none', artworkPath TEXT, artworkMtime INTEGER, deleted INTEGER DEFAULT 0);
+    CREATE TABLE albums (id INTEGER PRIMARY KEY, artistId INTEGER, title TEXT, path TEXT, artworkSource TEXT DEFAULT 'none', artworkPath TEXT, artworkMtime INTEGER, artworkHash TEXT, deleted INTEGER DEFAULT 0, lastFileMtime INTEGER);
     CREATE TABLE tracks (id INTEGER PRIMARY KEY, albumId INTEGER, path TEXT, deleted INTEGER DEFAULT 0);
     CREATE TABLE album_art (albumId INTEGER PRIMARY KEY, source TEXT, originalPath TEXT, remoteUrl TEXT, etag TEXT, lastFetchedAt INTEGER, hash TEXT, width INTEGER, height INTEGER);
+    CREATE TABLE artwork_cache (key TEXT PRIMARY KEY, path TEXT, mtime INTEGER, createdAt TEXT);
     CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, payloadJson TEXT, status TEXT, createdAt INTEGER, startedAt INTEGER, finishedAt INTEGER, error TEXT);
   `);
   db.prepare('INSERT INTO artists(id, name, deleted) VALUES(1, ?, 0)').run('Test Artist');
@@ -41,5 +42,19 @@ test('diagnoseAlbum returns placeholder when no local art exists', async () => {
   const diag = await service.diagnoseAlbum(1, { size: 512 });
   assert.equal(diag.resolved, true);
   assert.equal(diag.bestSource, 'placeholder');
+  assert.equal(fs.existsSync(diag.filePath), true);
+  assert.equal(diag.contentType, 'image/svg+xml');
+});
+
+test('diagnoseArtist falls back to album artwork when available', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-artwork-artist-'));
+  fs.writeFileSync(path.join(tmp, 'cover.jpg'), Buffer.from('fake-image'));
+  const db = dbForArtwork(tmp);
+  const service = new ArtworkService(db, { error() {} });
+  clearInterval(service.timer);
+
+  const diag = await service.diagnoseArtist(1, { size: 256 });
+  assert.equal(diag.resolved, true);
+  assert.equal(diag.bestSource, 'album');
   assert.equal(fs.existsSync(diag.filePath), true);
 });
