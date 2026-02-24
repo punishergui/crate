@@ -1,9 +1,26 @@
 import React from 'react';
+import Artwork from '../../components/Artwork';
+import { getAlbumArtUrl, getArtistArtUrl } from '../../lib/artwork';
 
 export function SkeletonRows({ rows = 3 }) {
   return <div className="skeleton-stack">{Array.from({ length: rows }).map((_, i) => <div key={i} className="skeleton-row" />)}</div>;
 }
 
-export function SimpleList({ items }) {
-  return <ul className="widget-list">{items.map((item) => <li key={item}>{item}</li>)}</ul>;
+export function AlbumTile({ album, subtext, size = 'md' }) {
+  return <article className="media-tile">
+    <Artwork src={getAlbumArtUrl(album)} alt={`${album.title || 'Album'} cover`} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size={size} />
+    <div><strong>{album.title || 'Unknown release'}</strong><span className="muted">{subtext || album.artistName || 'Unknown artist'}</span></div>
+  </article>;
+}
+
+export function ArtistTile({ artist, subtext }) {
+  return <article className="media-tile">
+    <Artwork src={getArtistArtUrl(artist)} alt={`${artist.name || 'Artist'} artwork`} fallbackSeed={artist.name || 'Artist'} size="sm" />
+    <div><strong>{artist.name || 'Unknown artist'}</strong><span className="muted">{subtext || 'Discover mix'}</span></div>
+  </article>;
+}
+
+export function CoverStrip({ items = [], empty = 'No artwork yet.' }) {
+  if (!items.length) return <p className="muted">{empty}</p>;
+  return <div className="cover-strip">{items.map((item, index) => <Artwork key={`${item.id || item.title || 'cover'}-${index}`} src={getAlbumArtUrl(item)} alt={item.title || 'Album cover'} fallbackSeed={`${item.artistName || ''} ${item.title || ''}`} size="sm" />)}</div>;
 }

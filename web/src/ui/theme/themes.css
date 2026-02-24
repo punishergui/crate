@@ -1,15 +1,22 @@
 :root {
-  --background: #0f1115;
+  --bg: #0f1115;
   --surface: #161a22;
-  --border: #2a303a;
+  --surface2: #1b202b;
   --text: #eceff6;
-  --mutedText: #99a1b0;
+  --muted: #99a1b0;
+  --border: #2a303a;
   --accent: #4ea3ff;
-  --accentGlow: rgb(78 163 255 / 45%);
+  --accent2: #78bdff;
+  --danger: #f06565;
   --success: #33d17a;
   --warning: #f6c35f;
-  --danger: #f06565;
-  --focusRing: #81b7ff;
+  --shadow: 0 10px 26px rgb(0 0 0 / 28%);
+  --glow: 0 0 16px rgb(78 163 255 / 35%);
+  --focus: #81b7ff;
+  --artBorder: rgb(255 255 255 / 10%);
+  --artOverlay: rgb(3 6 10 / 38%);
+  --artPlaceholder1: #33415f;
+  --artPlaceholder2: #1d2840;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;
@@ -17,30 +24,46 @@
 }
 
 html[data-theme='neon-djent'] {
-  --background: #090a0d;
+  --bg: #090a0d;
   --surface: #13161b;
-  --border: #242931;
+  --surface2: #171b22;
   --text: #f2f3f5;
-  --mutedText: #9097a4;
+  --muted: #9097a4;
+  --border: #242931;
   --accent: #ff9f1a;
-  --accentGlow: rgb(255 159 26 / 38%);
+  --accent2: #ffd08a;
+  --danger: #ff6b6b;
   --success: #40d29f;
   --warning: #ffce6a;
-  --danger: #ff6b6b;
-  --focusRing: #ffb347;
+  --shadow: 0 12px 30px rgb(0 0 0 / 45%);
+  --glow: 0 0 18px rgb(255 159 26 / 33%);
+  --focus: #ffb347;
+  --artBorder: rgb(255 171 77 / 25%);
+  --artOverlay: rgb(6 6 9 / 45%);
+  --artPlaceholder1: #46301a;
+  --artPlaceholder2: #221a12;
   --grain: radial-gradient(circle at 30% 30%, rgb(255 255 255 / 2%), transparent 45%), radial-gradient(circle at 70% 65%, rgb(255 255 255 / 1.5%), transparent 50%);
 }
 
 html[data-theme='classic-dark'] {
-  --background: #101319;
+  --bg: #101319;
   --surface: #1a1f29;
-  --border: #2c3442;
+  --surface2: #242c39;
   --text: #ecf0f8;
-  --mutedText: #97a4bc;
+  --muted: #97a4bc;
+  --border: #2c3442;
   --accent: #5b8dff;
-  --accentGlow: rgb(91 141 255 / 35%);
+  --accent2: #8ab0ff;
+  --danger: #ff7a7a;
   --success: #43d48d;
   --warning: #f5c15f;
-  --danger: #ff7a7a;
-  --focusRing: #82a7ff;
+  --glow: 0 0 18px rgb(91 141 255 / 30%);
+  --focus: #82a7ff;
+}
+
+:root {
+  --background: var(--bg);
+  --mutedText: var(--muted);
+  --accentGlow: rgb(255 159 26 / 38%);
+  --focusRing: var(--focus);
 }

@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
+import Artwork from './ui/components/Artwork';
+import { getAlbumArtUrl } from './ui/lib/artwork';
 import './ui/theme/themes.css';
 import './styles.css';
 
@@ -81,7 +83,7 @@ function Library() {
   const [list, setList] = React.useState({ items: [] });
   React.useEffect(() => { api.get(`/api/library/albums?search=${encodeURIComponent(q)}&page=1&pageSize=60`).then(setList).catch(() => setList({ items: [] })); }, [q]);
   return <section className="page-stack"><h1>Library</h1><input value={q} onChange={(e) => setQ(e.target.value)} className="input" placeholder="Filter by artist or album" />
-    <div className="simple-list">{list.items.map((item) => <article key={item.id} className="list-item"><strong>{item.title}</strong><span>{item.artistName}</span></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
+    <div className="simple-list">{list.items.map((item) => <article key={item.id} className="list-item"><div className="media-row"><Artwork src={getAlbumArtUrl(item)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
 }
 
 function ThemesSettingsPage() {
@@ -89,7 +91,8 @@ function ThemesSettingsPage() {
   const onApply = (id) => { applyTheme(id); setActiveTheme(id); };
   return <section className="page-stack"><h1>Themes</h1><div className="themes-grid">{THEMES.map((theme) => <article key={theme.id} className={`theme-card ${activeTheme === theme.id ? 'active' : ''}`}>
     <div className="theme-swatch-row">{theme.swatches.map((color) => <span key={color} className="swatch-dot" style={{ background: color }} />)}</div>
-    <strong>{theme.name}</strong><p>{theme.vibe}</p>
+    <strong>{theme.name} {activeTheme === theme.id ? <span className="badge">Active</span> : null}</strong><p>{theme.vibe}</p>
+    <div className="theme-live-preview"><div className="app-card"><div className="card-head"><h2>Preview</h2></div><div className="media-row"><Artwork size="sm" fallbackSeed={theme.name} overlay={<span>View</span>} /><button className="btn btn-small">Button</button></div><div className="preview-progress"><span style={{ width: '62%' }} /></div></div></div>
     <button className="btn" onClick={() => onApply(theme.id)}>{activeTheme === theme.id ? 'Active' : 'Apply'}</button>
   </article>)}</div></section>;
 }
