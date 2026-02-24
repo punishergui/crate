@@ -19,7 +19,7 @@ export const newReleasesWidget = {
   render: (ctx) => {
     const items = (ctx?.data?.newReleases || FALLBACK).slice(0, 8);
     return {
-      body: <div className="tile-grid">{items.map((album, i) => <AlbumTile key={`${album.id || album.title}-${i}`} album={album} subtext={`${album.artistName || 'Unknown'} · Out now`} />)}</div>,
+      body: <div className="tile-grid tile-grid--large">{items.map((album, i) => <AlbumTile key={`${album.id || album.title}-${i}`} album={album} subtext={`${album.artistName || 'Unknown'} · Out now`} />)}</div>,
       footer: <Link to="/releases" className="card-link">Explore more</Link>
     };
   }

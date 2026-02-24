@@ -19,8 +19,8 @@ export const discoverWidget = {
     const payload = ctx?.data?.discover || defaults;
     return {
       body: <div className="discover-columns">
-        <div><h4>New for You</h4>{(payload.newForYou || defaults.newForYou).slice(0, 3).map((item, i) => <AlbumTile key={`new-${i}`} album={item} subtext={item.artistName} size="tile" />)}</div>
-        <div><h4>Weekly Picks</h4>{(payload.weeklyPicks || defaults.weeklyPicks).slice(0, 3).map((item, i) => <AlbumTile key={`weekly-${i}`} album={item} subtext={item.artistName} size="tile" />)}</div>
+        <div><h4>New for You</h4>{(payload.newForYou || defaults.newForYou).slice(0, 3).map((item, i) => <AlbumTile key={`new-${i}`} album={item} subtext={item.artistName} size="tile-lg" />)}</div>
+        <div><h4>Weekly Picks</h4>{(payload.weeklyPicks || defaults.weeklyPicks).slice(0, 3).map((item, i) => <AlbumTile key={`weekly-${i}`} album={item} subtext={item.artistName} size="tile-lg" />)}</div>
         <div><h4>Similar Artists</h4>{(payload.similarArtists || defaults.similarArtists).slice(0, 3).map((item, i) => <ArtistTile key={`artist-${i}`} artist={item} subtext="Based on your library" />)}</div>
       </div>,
       footer: <Link to="/discover" className="card-link">View All</Link>

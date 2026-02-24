@@ -17,7 +17,7 @@ export const downloadsWidget = {
     const queue = ctx?.data?.downloads?.queueCount ?? 4;
     const progress = Math.max(0, Math.min(100, active.progress ?? 0));
     return {
-      body: <div className="download-widget"><div className="media-row"><Artwork src={getAlbumArtUrl(active)} alt={active.title || 'Downloading album'} fallbackSeed={`${active.artistName || ''} ${active.title || ''}`} size="sm" /><div><strong>{active.title || 'Waiting for metadata'}</strong><p className="muted">{active.artistName || 'Unknown artist'} · {progress}%</p></div></div><div className="progress"><span style={{ width: `${progress}%` }} /></div><p className="muted">Queue: {queue} item(s)</p></div>,
+      body: <div className="download-widget scroll-list"><div className="media-row"><Artwork src={getAlbumArtUrl(active)} alt={active.title || 'Downloading album'} fallbackSeed={`${active.artistName || ''} ${active.title || ''}`} size="sm" /><div><strong>{active.title || 'Waiting for metadata'}</strong><p className="muted">{active.artistName || 'Unknown artist'} · {progress}%</p></div></div><div className="progress"><span style={{ width: `${progress}%` }} /></div><p className="muted">Queue: {queue} item(s)</p></div>,
       footer: <Link to="/downloads" className="card-link">View queue</Link>
     };
   }

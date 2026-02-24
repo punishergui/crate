@@ -11,7 +11,6 @@ import {
   getArtistArtDiagnoseUrl,
   getArtistArtRescanUrl
 } from './ui/lib/artwork';
-import ArtworkPopout from './ui/components/ArtworkPopout.jsx';
 import './ui/theme/themes.css';
 import './styles.css';
 
@@ -84,6 +83,22 @@ function applyUiArtSettings(settings) {
 
 
 function safeParseDetails(raw) { if (!raw) return {}; try { return JSON.parse(raw); } catch { return { raw }; } }
+
+function useArtHover(enabled) {
+  React.useEffect(() => {
+    let cleanup;
+    const load = async () => {
+      try {
+        const mod = await (0, eval)("import('/js/art-hover.js')");
+        if (!enabled) return;
+        cleanup = mod.initArtHover();
+      } catch {}
+    };
+    load();
+    return () => { if (cleanup) cleanup(); };
+  }, [enabled]);
+}
+
 function formatDate(value) { if (!value) return '—'; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString(); }
 
 function useScanStatusPolling() {
@@ -246,6 +261,7 @@ function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
 function App() {
   const [scanStatus, setScanStatus] = useScanStatusPolling();
   const [uiSettings, setUiSettings] = React.useState(getUiArtSettings);
+  useArtHover(uiSettings.hoverPopout);
   React.useEffect(() => { applyUiArtSettings(uiSettings); localStorage.setItem(UI_ART_KEY, JSON.stringify(uiSettings)); }, [uiSettings]);
   const startScan = React.useCallback(async () => { const payload = await api.post('/api/scan/start'); if (payload?.status) setScanStatus(payload.status); return payload; }, [setScanStatus]);
 
@@ -266,7 +282,6 @@ function App() {
       <Route path="/settings" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
     </Routes></main>
     <nav className="mobile-nav">{NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}</nav>
-    <ArtworkPopout enabled={uiSettings.hoverPopout} />
   </div>;
 }
 
