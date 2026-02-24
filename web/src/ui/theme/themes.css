@@ -21,6 +21,12 @@
   --radius-md: 12px;
   --radius-lg: 18px;
   --grain: none;
+  --artRadius: 0px;
+  --artTile: 160px;
+  --artTileLg: 200px;
+  --artPopoutSize: 280px;
+  --artPopoutShadow: 0 20px 40px rgb(0 0 0 / 50%);
+  --artPopoutBorder: 1px solid var(--artBorder);
 }
 
 html[data-theme='neon-djent'] {

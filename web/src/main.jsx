@@ -1,10 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
 import Artwork from './ui/components/Artwork';
 import { getAlbumArtUrl } from './ui/lib/artwork';
+import ArtworkPopout from './ui/components/ArtworkPopout.jsx';
 import './ui/theme/themes.css';
 import './styles.css';
 
@@ -42,10 +43,38 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
   { to: '/library', label: 'Library' },
   { to: '/scan-report', label: 'Scan Report' },
-  { to: '/settings/themes', label: 'Themes' }
+  { to: '/settings/themes', label: 'Themes' },
+  { to: '/settings/appearance', label: 'Appearance' }
 ];
 
 const REASONS = ['missing_tags', 'tag_mismatch', 'unsupported_extension', 'hidden_path', 'permission_denied', 'unreadable'];
+
+const UI_ART_KEY = 'crate.ui.art.v1';
+const VIEW_MODE_KEY = 'crate.ui.viewModes.v1';
+
+function getUiArtSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(UI_ART_KEY) || '{}');
+    return {
+      artSize: saved.artSize || 'medium',
+      hoverPopout: saved.hoverPopout !== false,
+      popoutSize: saved.popoutSize || 280,
+      squareCorners: saved.squareCorners !== false
+    };
+  } catch {
+    return { artSize: 'medium', hoverPopout: true, popoutSize: 280, squareCorners: true };
+  }
+}
+
+function applyUiArtSettings(settings) {
+  const tileMap = { small: ['120px', '160px'], medium: ['160px', '200px'], large: ['190px', '230px'], massive: ['230px', '280px'] };
+  const [tile, tileLg] = tileMap[settings.artSize] || tileMap.medium;
+  document.documentElement.style.setProperty('--artTile', tile);
+  document.documentElement.style.setProperty('--artTileLg', tileLg);
+  document.documentElement.style.setProperty('--artPopoutSize', `${settings.popoutSize}px`);
+  document.documentElement.style.setProperty('--artRadius', settings.squareCorners ? '0px' : '12px');
+}
+
 
 function safeParseDetails(raw) { if (!raw) return {}; try { return JSON.parse(raw); } catch { return { raw }; } }
 function formatDate(value) { if (!value) return '—'; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString(); }
@@ -79,11 +108,24 @@ function TopBar({ scanStatus, onScan }) {
 }
 
 function Library() {
+  const location = useLocation();
   const [q, setQ] = React.useState('');
   const [list, setList] = React.useState({ items: [] });
+  const [mode, setMode] = React.useState(() => {
+    const saved = JSON.parse(localStorage.getItem(VIEW_MODE_KEY) || '{}');
+    return saved[location.pathname] || 'art-grid';
+  });
   React.useEffect(() => { api.get(`/api/library/albums?search=${encodeURIComponent(q)}&page=1&pageSize=60`).then(setList).catch(() => setList({ items: [] })); }, [q]);
-  return <section className="page-stack"><h1>Library</h1><input value={q} onChange={(e) => setQ(e.target.value)} className="input" placeholder="Filter by artist or album" />
-    <div className="simple-list">{list.items.map((item) => <article key={item.id} className="list-item"><div className="media-row"><Artwork src={getAlbumArtUrl(item)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
+  React.useEffect(() => {
+    const saved = JSON.parse(localStorage.getItem(VIEW_MODE_KEY) || '{}');
+    saved[location.pathname] = mode;
+    localStorage.setItem(VIEW_MODE_KEY, JSON.stringify(saved));
+  }, [mode, location.pathname]);
+
+  return <section className="page-stack"><div className="split-head"><h1>Library</h1><div className="inline-actions"><button className={`btn ${mode === 'art-grid' ? 'btn-accent' : ''}`} onClick={() => setMode('art-grid')}>Art Grid</button><button className={`btn ${mode === 'compact-list' ? 'btn-accent' : ''}`} onClick={() => setMode('compact-list')}>Compact List</button></div></div><input value={q} onChange={(e) => setQ(e.target.value)} className="input" placeholder="Filter by artist or album" />
+    <div className={mode === 'art-grid' ? 'album-grid' : 'simple-list'}>{list.items.map((item) => mode === 'art-grid'
+      ? <article key={item.id} className="album-grid-tile"><Artwork src={getAlbumArtUrl(item, 512)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="tile" badge={item.artworkSource || ''} /><strong>{item.title}</strong><span className="muted">{item.artistName}</span></article>
+      : <article key={item.id} className="list-item"><div className="media-row"><Artwork src={getAlbumArtUrl(item, 256)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" popout popoutTitle={item.title} popoutSubtitle={item.artistName} /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
 }
 
 function ThemesSettingsPage() {
@@ -95,6 +137,17 @@ function ThemesSettingsPage() {
     <div className="theme-live-preview"><div className="app-card"><div className="card-head"><h2>Preview</h2></div><div className="media-row"><Artwork size="sm" fallbackSeed={theme.name} overlay={<span>View</span>} /><button className="btn btn-small">Button</button></div><div className="preview-progress"><span style={{ width: '62%' }} /></div></div></div>
     <button className="btn" onClick={() => onApply(theme.id)}>{activeTheme === theme.id ? 'Active' : 'Apply'}</button>
   </article>)}</div></section>;
+}
+
+
+function AppearanceSettingsPage({ uiSettings, setUiSettings }) {
+  const patch = (next) => setUiSettings((prev) => ({ ...prev, ...next }));
+  return <section className="page-stack"><h1>Appearance</h1><div className="app-card"><div className="filters-row">
+    <label>Album art size<select value={uiSettings.artSize} onChange={(e) => patch({ artSize: e.target.value })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="massive">Massive</option></select></label>
+    <label>Enable hover popout<select value={uiSettings.hoverPopout ? 'on' : 'off'} onChange={(e) => patch({ hoverPopout: e.target.value === 'on' })}><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Popout size<select value={uiSettings.popoutSize} onChange={(e) => patch({ popoutSize: Number(e.target.value) })}><option value={200}>200</option><option value={280}>280</option><option value={360}>360</option></select></label>
+    <label>Square corners<select value={uiSettings.squareCorners ? 'on' : 'off'} onChange={(e) => patch({ squareCorners: e.target.value === 'on' })}><option value="on">On</option><option value="off">Rounded</option></select></label>
+  </div></div></section>;
 }
 
 function PlaceholderPage({ title, text }) { return <section className="page-stack"><h1>{title}</h1><AppCard title={title}><p>{text}</p></AppCard></section>; }
@@ -129,6 +182,8 @@ function ScanReportPage({ scanStatus, setScanStatus, onStartScan }) {
 
 function App() {
   const [scanStatus, setScanStatus] = useScanStatusPolling();
+  const [uiSettings, setUiSettings] = React.useState(getUiArtSettings);
+  React.useEffect(() => { applyUiArtSettings(uiSettings); localStorage.setItem(UI_ART_KEY, JSON.stringify(uiSettings)); }, [uiSettings]);
   const startScan = React.useCallback(async () => { const payload = await api.post('/api/scan/start'); if (payload?.status) setScanStatus(payload.status); return payload; }, [setScanStatus]);
 
   return <div className="app-shell"><aside className="sidebar"><div className="brand">CRATE</div><nav className="nav-list">{NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}</nav></aside>
@@ -137,15 +192,17 @@ function App() {
       <Route path="/library" element={<Library />} />
       <Route path="/scan-report" element={<ScanReportPage scanStatus={scanStatus} setScanStatus={setScanStatus} onStartScan={startScan} />} />
       <Route path="/settings/themes" element={<ThemesSettingsPage />} />
+      <Route path="/settings/appearance" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
       <Route path="/concerts" element={<PlaceholderPage title="Concerts" text="Concert events and locations will appear here." />} />
       <Route path="/releases" element={<PlaceholderPage title="Releases" text="New and upcoming releases feed." />} />
       <Route path="/downloads" element={<PlaceholderPage title="Downloads" text="Soulseek download queue and history." />} />
       <Route path="/discover" element={<PlaceholderPage title="Discover" text="Spotify discover recommendations." />} />
       <Route path="/missing" element={<PlaceholderPage title="Missing Albums" text="Albums still missing from your library." />} />
       <Route path="/activity" element={<PlaceholderPage title="Recent Activity" text="Recent listening and scan activity." />} />
-      <Route path="/settings" element={<ThemesSettingsPage />} />
+      <Route path="/settings" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
     </Routes></main>
     <nav className="mobile-nav">{NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}</nav>
+    <ArtworkPopout enabled={uiSettings.hoverPopout} />
   </div>;
 }
 

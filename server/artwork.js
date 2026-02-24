@@ -33,7 +33,8 @@ class ArtworkService {
     return {
       original: path.join(ORIGINAL_DIR, `${albumId}.jpg`),
       thumb256: path.join(THUMBS_DIR, `${albumId}_256.jpg`),
-      thumb512: path.join(THUMBS_DIR, `${albumId}_512.jpg`)
+      thumb512: path.join(THUMBS_DIR, `${albumId}_512.jpg`),
+      thumb1024: path.join(THUMBS_DIR, `${albumId}_1024.jpg`)
     };
   }
 
@@ -88,7 +89,7 @@ class ArtworkService {
       });
     if (!files.length) return null;
 
-    const exact = files.find((file) => ['cover.jpg', 'folder.jpg', 'front.jpg', 'album.jpg'].includes(file.name));
+    const exact = files.find((file) => ['cover.jpg', 'folder.jpg', 'front.jpg', 'album.jpg', 'cover.png', 'folder.png', 'front.png'].includes(file.name));
     if (exact) return exact.fullPath;
 
     const named = files.filter((file) => /cover|folder|front/.test(file.name)).sort((a, b) => b.size - a.size)[0];
@@ -102,6 +103,7 @@ class ArtworkService {
     await fsp.copyFile(sourcePath, paths.original);
     await fsp.copyFile(sourcePath, paths.thumb256);
     await fsp.copyFile(sourcePath, paths.thumb512);
+    await fsp.copyFile(sourcePath, paths.thumb1024);
     const data = await fsp.readFile(sourcePath);
     this.db.prepare(`
       INSERT INTO album_art(albumId, source, originalPath, remoteUrl, etag, lastFetchedAt, hash)
@@ -143,6 +145,22 @@ class ArtworkService {
     await this.cacheFromPath(album.id, tmpPath, { source: 'remote', remoteUrl: coverUrl, etag: coverRes.headers.get('etag') });
     await fsp.rm(tmpPath, { force: true });
     return true;
+  }
+
+  getAlbumArtworkStatus(albumId) {
+    return this.db.prepare(`SELECT source, originalPath, remoteUrl, lastFetchedAt FROM album_art WHERE albumId = ?`).get(albumId) || null;
+  }
+
+  getArtistArtworkAlbumId(artistId) {
+    const row = this.db.prepare(`
+      SELECT al.id
+      FROM albums al
+      LEFT JOIN album_art aa ON aa.albumId = al.id
+      WHERE al.artistId = ? AND al.deleted = 0 AND aa.source IS NOT NULL AND aa.source != 'none'
+      ORDER BY al.lastFileMtime DESC, al.id DESC
+      LIMIT 1
+    `).get(artistId);
+    return row?.id || null;
   }
 
   markNone(albumId) {

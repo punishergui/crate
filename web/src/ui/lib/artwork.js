@@ -1,3 +1,6 @@
+const AVAILABLE_SIZES = [256, 512, 1024];
+const hasArtworkCache = new Map();
+
 function firstNumber(...values) {
   for (const value of values) {
     const parsed = Number(value);
@@ -14,6 +17,25 @@ function cleanUrl(value) {
   return null;
 }
 
+export function getBestArtworkSize(targetPx = 256) {
+  const numeric = Number(targetPx) || 256;
+  return AVAILABLE_SIZES.find((size) => size >= numeric) || 1024;
+}
+
+export function rememberArtworkAvailability(id, ok) {
+  if (!id) return;
+  hasArtworkCache.set(String(id), Boolean(ok));
+  if (hasArtworkCache.size > 4000) {
+    const first = hasArtworkCache.keys().next();
+    if (!first.done) hasArtworkCache.delete(first.value);
+  }
+}
+
+export function getKnownArtworkAvailability(id) {
+  if (!id) return null;
+  return hasArtworkCache.has(String(id)) ? hasArtworkCache.get(String(id)) : null;
+}
+
 export function getAlbumArtUrl(album, size = 256) {
   if (!album || typeof album !== 'object') return null;
   const direct = cleanUrl(album.artworkUrl || album.coverUrl || album.imageUrl);
@@ -24,7 +46,7 @@ export function getAlbumArtUrl(album, size = 256) {
 
   const albumId = firstNumber(album.albumId, album.id);
   if (!albumId) return null;
-  return `/api/artwork/album/${albumId}?size=${size}`;
+  return `/api/artwork/album/${albumId}?size=${getBestArtworkSize(size)}`;
 }
 
 export function getArtistArtUrl(artist, size = 256) {
@@ -33,9 +55,6 @@ export function getArtistArtUrl(artist, size = 256) {
   if (direct) return direct;
 
   const artistId = firstNumber(artist.artistId, artist.id);
-  if (artistId && artist.albumId) {
-    return `/api/artwork/album/${artist.albumId}?size=${size}`;
-  }
-
-  return null;
+  if (!artistId) return null;
+  return `/api/artwork/artist/${artistId}?size=${getBestArtworkSize(size)}`;
 }

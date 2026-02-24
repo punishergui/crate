@@ -854,19 +854,41 @@ app.get('/api/artwork/album/:albumId', async (req, reply) => {
   const albumId = Number(req.params.albumId);
   const size = String(req.query.size || '512');
   if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
-  if (!['256', '512', 'original'].includes(size)) return reply.code(400).send({ error: 'size must be 256|512|original' });
+  if (!['256', '512', '1024', 'original'].includes(size)) return reply.code(400).send({ error: 'size must be 256|512|1024|original' });
 
   const paths = artwork.getPaths(albumId);
-  const filePath = size === 'original' ? paths.original : (size === '256' ? paths.thumb256 : paths.thumb512);
+  const filePath = size === 'original' ? paths.original : (size === '256' ? paths.thumb256 : (size === '1024' ? paths.thumb1024 : paths.thumb512));
   if (!fs.existsSync(filePath)) return reply.code(404).send({ error: 'Artwork not found' });
+  const stat = fs.statSync(filePath);
+  const etag = `W/"${stat.size}-${Number(stat.mtimeMs)}"`;
+  if (req.headers['if-none-match'] === etag) return reply.code(304).send();
   const header = Buffer.alloc(8);
   const fd = fs.openSync(filePath, 'r');
   fs.readSync(fd, header, 0, 8, 0);
   fs.closeSync(fd);
   const isPng = header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47;
-  reply.header('Cache-Control', 'public, max-age=86400, immutable');
+  reply.header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+  reply.header('ETag', etag);
+  reply.header('Last-Modified', stat.mtime.toUTCString());
   reply.type(isPng ? 'image/png' : 'image/jpeg');
   return reply.send(fs.createReadStream(filePath));
+});
+
+app.get('/api/artwork/album/:albumId/status', async (req, reply) => {
+  const albumId = Number(req.params.albumId);
+  if (!Number.isInteger(albumId) || albumId < 1) return reply.code(400).send({ error: 'invalid album id' });
+  const status = artwork.getAlbumArtworkStatus(albumId);
+  if (!status) return reply.code(404).send({ error: 'No artwork status found' });
+  return { ...status, tried: ['embedded', 'cover.jpg|folder.jpg|front.jpg|*.png', 'cached remote', 'generated placeholder'] };
+});
+
+app.get('/api/artwork/artist/:artistId', async (req, reply) => {
+  const artistId = Number(req.params.artistId);
+  const size = String(req.query.size || '512');
+  if (!Number.isInteger(artistId) || artistId < 1) return reply.code(400).send({ error: 'invalid artist id' });
+  const albumId = artwork.getArtistArtworkAlbumId(artistId);
+  if (!albumId) return reply.code(404).send({ error: 'Artwork not found' });
+  return reply.redirect(`/api/artwork/album/${albumId}?size=${size}`);
 });
 
 app.post('/api/artwork/album/:albumId/refresh', async (req, reply) => {
