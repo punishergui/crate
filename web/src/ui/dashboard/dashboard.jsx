@@ -7,7 +7,7 @@ const LAYOUT_KEY = 'crate.dashboard.layout.v1';
 const sizeToSpan = { sm: 3, md: 6, lg: 12 };
 
 function defaultLayout() {
-  return widgetRegistry.map((widget, index) => ({ id: widget.id, size: widget.defaultSize, visible: true, order: index }));
+  return widgetRegistry.map((widget, index) => ({ id: widget.id, size: widget.defaultSize || 'md', visible: widget.defaultVisible !== false, order: Number.isInteger(widget.defaultOrder) ? widget.defaultOrder : index }));
 }
 
 function sanitizeLayout(raw) {
@@ -84,7 +84,7 @@ export default function DashboardPage() {
     <div className={`dashboard-grid ${isEditing ? 'editing' : ''}`}>
       {visibleItems.map((layoutItem) => {
         const widget = widgetMap[layoutItem.id];
-        const rendered = widget.render({ data });
+        const rendered = widget.render({ data, layout: layoutItem });
         return <div
           key={widget.id}
           className={`widget-slot span-${sizeToSpan[layoutItem.size]}`}

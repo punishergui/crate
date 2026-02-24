@@ -16,6 +16,10 @@ export const widgetRegistry = [
   missingAlbumsWidget,
   upcomingReleasesWidget,
   recentActivityWidget
-];
+].map((widget, index) => ({
+  ...widget,
+  defaultOrder: Number.isInteger(widget.defaultOrder) ? widget.defaultOrder : index,
+  defaultVisible: widget.defaultVisible !== false
+}));
 
-export const widgetMap = Object.fromEntries(widgetRegistry.map((widget, index) => [widget.id, { ...widget, defaultOrder: index }]));
+export const widgetMap = Object.fromEntries(widgetRegistry.map((widget) => [widget.id, widget]));
