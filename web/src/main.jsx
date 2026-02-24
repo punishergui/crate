@@ -19,8 +19,8 @@ registerSW({ immediate: true });
 
 const THEME_KEY = 'crate.theme.v1';
 const THEMES = [
-  { id: 'neon-djent', name: 'Neon Djent', vibe: 'Gritty dark shell with restrained neon amber accents.', swatches: ['#090a0d', '#13161b', '#ff9f1a'] },
-  { id: 'classic-dark', name: 'Classic Dark', vibe: 'Muted dark mode with cool blue highlights.', swatches: ['#101319', '#1a1f29', '#5b8dff'] }
+  { id: 'neon-djent', name: 'Neon Djent', vibe: 'Dark charcoal shell with neon orange accents and subtle teal glow.', swatches: ['#090a0d', '#13161b', '#ff9f1a', '#47d1c8'] },
+  { id: 'slate', name: 'Slate', vibe: 'Neutral dark palette with restrained contrast and minimal glow.', swatches: ['#101319', '#1a1f29', '#8ea0b8', '#a7b3c5'] }
 ];
 
 function getTheme() {
@@ -92,9 +92,9 @@ function useArtHover(enabled) {
     let cleanup;
     const load = async () => {
       try {
-        const mod = await (0, eval)("import('/js/art-hover.js')");
+        const mod = await (0, eval)("import('/js/coverHoverPreview.js')");
         if (!enabled) return;
-        cleanup = mod.initArtHover();
+        cleanup = mod.attachCoverHoverPreview('.content');
       } catch {}
     };
     load();
@@ -224,7 +224,7 @@ function ThemesSettingsPage() {
     <div className="theme-swatch-row">{theme.swatches.map((color) => <span key={color} className="swatch-dot" style={{ background: color }} />)}</div>
     <strong>{theme.name} {activeTheme === theme.id ? <span className="badge">Active</span> : null}</strong><p>{theme.vibe}</p>
     <div className="theme-live-preview"><div className="app-card"><div className="card-head"><h2>Preview</h2></div><div className="media-row"><Artwork size="sm" fallbackSeed={theme.name} overlay={<span>View</span>} /><button className="btn btn-small">Button</button></div><div className="preview-progress"><span style={{ width: '62%' }} /></div></div></div>
-    <button className="btn" onClick={() => onApply(theme.id)}>{activeTheme === theme.id ? 'Active' : 'Apply'}</button>
+    <button className="btn" onClick={() => onApply(theme.id)}>{activeTheme === theme.id ? 'Active' : 'Set Theme'}</button>
   </article>)}</div></section>;
 }
 

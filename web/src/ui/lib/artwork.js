@@ -28,16 +28,23 @@ export function getKnownArtworkAvailability(id) {
   return hasArtworkCache.has(String(id)) ? hasArtworkCache.get(String(id)) : null;
 }
 
+
+export function resolveArtworkUrl(type, id, size = 256) {
+  const numericId = firstNumber(id);
+  if (!numericId) return null;
+  const safeType = type === 'artist' ? 'artist' : 'album';
+  return `/api/artwork/${safeType}/${numericId}?size=${getBestArtworkSize(size)}`;
+}
 export function getAlbumArtUrl(albumOrId, size = 256) {
   const albumId = typeof albumOrId === 'object' ? firstNumber(albumOrId?.albumId, albumOrId?.id) : firstNumber(albumOrId);
   if (!albumId) return null;
-  return `/api/artwork/album/${albumId}?size=${getBestArtworkSize(size)}`;
+  return resolveArtworkUrl('album', albumId, size);
 }
 
 export function getArtistArtUrl(artistOrId, size = 256) {
   const artistId = typeof artistOrId === 'object' ? firstNumber(artistOrId?.artistId, artistOrId?.id) : firstNumber(artistOrId);
   if (!artistId) return null;
-  return `/api/artwork/artist/${artistId}?size=${getBestArtworkSize(size)}`;
+  return resolveArtworkUrl('artist', artistId, size);
 }
 
 export function getAlbumArtDiagnoseUrl(albumId) {
