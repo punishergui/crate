@@ -2,14 +2,23 @@ const OFFSET = 20;
 const EDGE_GUTTER = 10;
 const TOUCH_MEDIA = '(hover: none), (pointer: coarse)';
 const ART_SELECTOR = '[data-art-hover="1"], img[data-art-hover="1"]';
+const PRELOAD_CACHE_LIMIT = 800;
+const preloadCache = new Map();
 
 function isTouchOnly() {
   return window.matchMedia(TOUCH_MEDIA).matches;
 }
 
-function clampPosition(cx, cy, size) {
-  const maxX = window.innerWidth - size - EDGE_GUTTER;
-  const maxY = window.innerHeight - size - EDGE_GUTTER;
+function getHoverArtSize() {
+  const root = getComputedStyle(document.documentElement);
+  const sizeVar = Number(root.getPropertyValue('--hover-art-size').replace('px', '').trim());
+  if (Number.isFinite(sizeVar) && sizeVar > 0) return sizeVar;
+  return Math.max(220, Math.min(320, Math.floor(window.innerWidth * 0.24)));
+}
+
+function clampPosition(cx, cy, artSize, totalHeight) {
+  const maxX = window.innerWidth - artSize - EDGE_GUTTER;
+  const maxY = window.innerHeight - totalHeight - EDGE_GUTTER;
   return {
     x: Math.max(EDGE_GUTTER, Math.min(maxX, cx + OFFSET)),
     y: Math.max(EDGE_GUTTER, Math.min(maxY, cy + OFFSET))
@@ -29,6 +38,34 @@ function runDevSafetyCheck(root = document) {
   });
 }
 
+function trimCache() {
+  if (preloadCache.size <= PRELOAD_CACHE_LIMIT) return;
+  const first = preloadCache.keys().next();
+  if (!first.done) preloadCache.delete(first.value);
+}
+
+function preloadImage(src) {
+  if (!src) return Promise.resolve(false);
+  if (preloadCache.has(src)) return preloadCache.get(src);
+
+  const promise = new Promise((resolve) => {
+    const test = new Image();
+    test.decoding = 'async';
+    test.onload = () => resolve(true);
+    test.onerror = () => resolve(false);
+    test.src = src;
+  });
+  preloadCache.set(src, promise);
+  trimCache();
+  return promise;
+}
+
+async function resolveHoverArtSource(primarySrc = '', fallbackSrc = '') {
+  if (primarySrc && await preloadImage(primarySrc)) return primarySrc;
+  if (fallbackSrc && await preloadImage(fallbackSrc)) return fallbackSrc;
+  return '';
+}
+
 export function initArtHover() {
   if (isTouchOnly()) return null;
   let overlay = document.getElementById('artHoverPreview');
@@ -37,7 +74,7 @@ export function initArtHover() {
   overlay = document.createElement('div');
   overlay.id = 'artHoverPreview';
   overlay.hidden = true;
-  overlay.innerHTML = '<img id="artHoverImg" alt="" /><div id="artHoverFallback" aria-hidden="true">♪</div><div id="artHoverMeta"><strong id="artHoverTitle"></strong><span id="artHoverSubtitle"></span></div>';
+  overlay.innerHTML = '<div id="artHoverArtBox"><img id="artHoverImg" alt="" /><div id="artHoverFallback" aria-hidden="true"><span>♪</span></div></div><div id="artHoverMeta"><strong id="artHoverTitle"></strong><span id="artHoverSubtitle"></span></div>';
   document.body.appendChild(overlay);
   return overlay;
 }
@@ -53,9 +90,9 @@ export function attachArtHover(root = document) {
   const subtitleEl = overlay.querySelector('#artHoverSubtitle');
   const meta = overlay.querySelector('#artHoverMeta');
   let activeTarget = null;
-  let pendingSrc = '';
   let rafId = 0;
   let debounceTimer = 0;
+  let renderToken = 0;
   let targetPoint = { x: -9999, y: -9999 };
   let renderedPoint = { x: -9999, y: -9999 };
   let routeCheckTimer = 0;
@@ -63,7 +100,6 @@ export function attachArtHover(root = document) {
 
   const hide = () => {
     activeTarget = null;
-    pendingSrc = '';
     window.clearTimeout(debounceTimer);
     overlay.hidden = true;
   };
@@ -77,8 +113,9 @@ export function attachArtHover(root = document) {
   };
 
   const moveTo = (event) => {
-    const size = Number(getComputedStyle(document.documentElement).getPropertyValue('--artPopoutSize').replace('px', '')) || 280;
-    targetPoint = clampPosition(event.clientX, event.clientY, size);
+    const artSize = getHoverArtSize();
+    const metaHeight = meta.hidden ? 0 : Math.max(38, meta.offsetHeight || 0);
+    targetPoint = clampPosition(event.clientX, event.clientY, artSize, artSize + metaHeight);
     if (!rafId && !overlay.hidden) {
       renderedPoint = { ...targetPoint };
       overlay.style.transform = `translate3d(${renderedPoint.x}px, ${renderedPoint.y}px, 0)`;
@@ -89,24 +126,35 @@ export function attachArtHover(root = document) {
   const show = (target, event) => {
     if (!target || isTouchOnly()) return;
     const src = target.dataset.artSrc || '';
-    if (src !== pendingSrc) {
-      pendingSrc = src;
-      window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        image.src = src || '';
-      }, 24);
-    }
+    const fallbackSrc = target.dataset.artFallbackSrc || '';
     const title = target.dataset.artTitle || '';
     const subtitle = target.dataset.artSubtitle || '';
+    const token = ++renderToken;
+
     titleEl.textContent = title;
     subtitleEl.textContent = subtitle;
     subtitleEl.hidden = !subtitle;
     meta.hidden = !title && !subtitle;
-    fallback.hidden = Boolean(src);
-    image.hidden = !src;
+    image.hidden = true;
+    fallback.hidden = false;
+    overlay.hidden = false;
     activeTarget = target;
     moveTo(event);
-    overlay.hidden = false;
+
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(async () => {
+      const resolved = await resolveHoverArtSource(src, fallbackSrc);
+      if (token !== renderToken || activeTarget !== target) return;
+      if (resolved) {
+        image.src = resolved;
+        image.hidden = false;
+        fallback.hidden = true;
+      } else {
+        image.removeAttribute('src');
+        image.hidden = true;
+        fallback.hidden = false;
+      }
+    }, 16);
   };
 
   const findArtTarget = (event) => event.target?.closest?.('[data-art-hover="1"]');
@@ -135,11 +183,6 @@ export function attachArtHover(root = document) {
     hide();
   };
 
-  const onImageError = () => {
-    image.hidden = true;
-    fallback.hidden = false;
-  };
-
   if (import.meta?.env?.DEV) {
     routeCheckTimer = window.setInterval(() => {
       const route = `${window.location.pathname}${window.location.search}`;
@@ -150,7 +193,6 @@ export function attachArtHover(root = document) {
     }, 300);
   }
 
-  image.addEventListener('error', onImageError);
   root.addEventListener('mouseover', onMouseOver);
   root.addEventListener('mousemove', onMouseMove);
   root.addEventListener('mouseout', onMouseOut);
@@ -161,7 +203,6 @@ export function attachArtHover(root = document) {
     window.clearTimeout(debounceTimer);
     if (routeCheckTimer) window.clearInterval(routeCheckTimer);
     if (rafId) window.cancelAnimationFrame(rafId);
-    image.removeEventListener('error', onImageError);
     root.removeEventListener('mouseover', onMouseOver);
     root.removeEventListener('mousemove', onMouseMove);
     root.removeEventListener('mouseout', onMouseOut);

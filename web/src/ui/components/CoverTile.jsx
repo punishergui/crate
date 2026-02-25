@@ -9,6 +9,7 @@ export default function CoverTile({ size = 'md', albumId, title = 'Unknown relea
     <Artwork
       kind="album"
       id={albumId?.id || albumId?.albumId || albumId}
+      hoverFallbackId={albumId?.artistId}
       title={title}
       subtitle={subtitle}
       alt={`${title} cover`}

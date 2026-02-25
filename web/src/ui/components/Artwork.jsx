@@ -16,7 +16,7 @@ function colorShift(seed = '') {
   return Math.abs(hash % 40);
 }
 
-export default function Artwork({ kind = 'album', id = null, title = '', subtitle = '', src, alt = 'Artwork', size = 'md', fallbackSeed = '', overlay = null, popout = true, popoutTitle = '', popoutSubtitle = '', badge = '', widthPx = null, className = '' }) {
+export default function Artwork({ kind = 'album', id = null, hoverFallbackId = null, title = '', subtitle = '', src, alt = 'Artwork', size = 'md', fallbackSeed = '', overlay = null, popout = true, popoutTitle = '', popoutSubtitle = '', badge = '', widthPx = null, className = '' }) {
   const [failed, setFailed] = React.useState(false);
   const ref = React.useRef(null);
   const [visible, setVisible] = React.useState(false);
@@ -50,9 +50,13 @@ export default function Artwork({ kind = 'album', id = null, title = '', subtitl
   const initials = initialsFromSeed(fallbackSeed || alt);
   const displayTitle = popoutTitle || title || alt;
   const displaySubtitle = popoutSubtitle || subtitle || '';
+  const fallbackHoverSrc = kind === 'album' && hoverFallbackId
+    ? resolveArtworkUrl('artist', hoverFallbackId, 512) || ''
+    : '';
   const hoverAttrs = buildArtHoverAttrs({
     enabled: popout,
     src: resolvedSrc || '',
+    fallbackSrc: fallbackHoverSrc,
     title: displayTitle,
     subtitle: displaySubtitle
   });
