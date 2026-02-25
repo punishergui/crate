@@ -1,6 +1,5 @@
 import React from 'react';
 import Artwork from './Artwork';
-import { getAlbumArtUrl } from '../lib/artwork';
 
 const SIZE_MAP = { sm: '96px', md: '140px', lg: '220px' };
 
@@ -8,7 +7,10 @@ export default function CoverTile({ size = 'md', albumId, title = 'Unknown relea
   const px = SIZE_MAP[size] || SIZE_MAP.md;
   return <article className={`cover-tile-v2 ${className}`.trim()} style={{ '--coverSize': px }}>
     <Artwork
-      src={getAlbumArtUrl(albumId, size === 'lg' ? 1024 : 512)}
+      kind="album"
+      id={albumId?.id || albumId?.albumId || albumId}
+      title={title}
+      subtitle={subtitle}
       alt={`${title} cover`}
       fallbackSeed={`${subtitle} ${title}`}
       size="tile"

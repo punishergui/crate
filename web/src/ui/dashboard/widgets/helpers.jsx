@@ -1,7 +1,6 @@
 import React from 'react';
 import Artwork from '../../components/Artwork';
 import CoverTile from '../../components/CoverTile';
-import { getAlbumArtUrl, getArtistArtUrl } from '../../lib/artwork';
 
 export function SkeletonRows({ rows = 3 }) {
   return <div className="skeleton-stack">{Array.from({ length: rows }).map((_, i) => <div key={i} className="skeleton-row" />)}</div>;
@@ -9,14 +8,14 @@ export function SkeletonRows({ rows = 3 }) {
 
 export function AlbumTile({ album, subtext, size = 'tile-lg' }) {
   return <article className="media-tile media-tile-art">
-    <Artwork src={getAlbumArtUrl(album, 512)} alt={`${album.title || 'Album'} cover`} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size={size} popout popoutTitle={album.title || 'Unknown release'} popoutSubtitle={album.artistName || 'Unknown artist'} badge={album.artworkSource || ''} />
+    <Artwork kind="album" id={album?.id || album?.albumId} title={album.title || 'Unknown release'} subtitle={album.artistName || 'Unknown artist'} alt={`${album.title || 'Album'} cover`} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size={size} popout popoutTitle={album.title || 'Unknown release'} popoutSubtitle={album.artistName || 'Unknown artist'} badge={album.artworkSource || ''} />
     <div><strong>{album.title || 'Unknown release'}</strong><span className="muted">{subtext || album.artistName || 'Unknown artist'}</span></div>
   </article>;
 }
 
 export function ArtistTile({ artist, subtext }) {
   return <article className="media-tile media-tile-art">
-    <Artwork src={getArtistArtUrl(artist, 512)} alt={`${artist.name || 'Artist'} artwork`} fallbackSeed={artist.name || 'Artist'} size="tile-lg" popout popoutTitle={artist.name || 'Unknown artist'} popoutSubtitle={subtext || 'Discover mix'} />
+    <Artwork kind="artist" id={artist?.id || artist?.artistId} title={artist.name || 'Unknown artist'} subtitle={subtext || 'Discover mix'} alt={`${artist.name || 'Artist'} artwork`} fallbackSeed={artist.name || 'Artist'} size="tile-lg" popout popoutTitle={artist.name || 'Unknown artist'} popoutSubtitle={subtext || 'Discover mix'} />
     <div><strong>{artist.name || 'Unknown artist'}</strong><span className="muted">{subtext || 'Discover mix'}</span></div>
   </article>;
 }

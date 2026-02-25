@@ -28,12 +28,13 @@ export function getKnownArtworkAvailability(id) {
   return hasArtworkCache.has(String(id)) ? hasArtworkCache.get(String(id)) : null;
 }
 
-export function buildArtHoverAttrs({ src = '', label = '', enabled = true } = {}) {
+export function buildArtHoverAttrs({ src = '', title = '', subtitle = '', enabled = true } = {}) {
   if (!enabled) return {};
   return {
     'data-art-hover': '1',
     'data-art-src': src || '',
-    'data-art-label': label || ''
+    'data-art-title': title || '',
+    'data-art-subtitle': subtitle || ''
   };
 }
 

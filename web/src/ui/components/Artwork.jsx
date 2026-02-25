@@ -1,5 +1,5 @@
 import React from 'react';
-import { buildArtHoverAttrs, getBestArtworkSize, getKnownArtworkAvailability, rememberArtworkAvailability } from '../lib/artwork';
+import { buildArtHoverAttrs, getBestArtworkSize, getKnownArtworkAvailability, rememberArtworkAvailability, resolveArtworkUrl } from '../lib/artwork';
 
 const SIZE_MAP = { xs: 28, sm: 48, md: 88, lg: 140, xl: 220, tile: 'var(--tile-size, 128px)', 'tile-lg': 'var(--tile-size-lg, 160px)' };
 
@@ -16,16 +16,23 @@ function colorShift(seed = '') {
   return Math.abs(hash % 40);
 }
 
-export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSeed = '', overlay = null, popout = true, popoutTitle = '', popoutSubtitle = '', badge = '', widthPx = null }) {
+export default function Artwork({ kind = 'album', id = null, title = '', subtitle = '', src, alt = 'Artwork', size = 'md', fallbackSeed = '', overlay = null, popout = true, popoutTitle = '', popoutSubtitle = '', badge = '', widthPx = null, className = '' }) {
   const [failed, setFailed] = React.useState(false);
   const ref = React.useRef(null);
   const [visible, setVisible] = React.useState(false);
-  React.useEffect(() => setFailed(false), [src]);
+
+  const px = widthPx || SIZE_MAP[size] || SIZE_MAP.md;
+  const numericPx = typeof px === 'number' ? px : 256;
+  const imgSize = getBestArtworkSize(numericPx);
+  const explicitSrc = src || (id ? resolveArtworkUrl(kind, id, imgSize) : '');
+  const resolvedSrc = explicitSrc ? explicitSrc.replace(/size=\d+/, `size=${imgSize}`) : explicitSrc;
+
+  React.useEffect(() => setFailed(false), [resolvedSrc]);
 
   React.useEffect(() => {
-    const known = getKnownArtworkAvailability(src);
+    const known = getKnownArtworkAvailability(resolvedSrc);
     if (known === false) setFailed(true);
-  }, [src]);
+  }, [resolvedSrc]);
 
   React.useEffect(() => {
     if (!ref.current) return undefined;
@@ -39,22 +46,21 @@ export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSee
     return () => observer.disconnect();
   }, []);
 
-  const px = widthPx || SIZE_MAP[size] || SIZE_MAP.md;
-  const numericPx = typeof px === 'number' ? px : 256;
-  const imgSize = getBestArtworkSize(numericPx);
-  const resolvedSrc = src ? src.replace(/size=\d+/, `size=${imgSize}`) : src;
   const showImage = Boolean(resolvedSrc && !failed && visible);
   const initials = initialsFromSeed(fallbackSeed || alt);
+  const displayTitle = popoutTitle || title || alt;
+  const displaySubtitle = popoutSubtitle || subtitle || '';
   const hoverAttrs = buildArtHoverAttrs({
     enabled: popout,
-    src: showImage ? resolvedSrc : '',
-    label: [popoutTitle || alt, popoutSubtitle].filter(Boolean).join(' — ')
+    src: resolvedSrc || '',
+    title: displayTitle,
+    subtitle: displaySubtitle
   });
 
   return (
     <div
       ref={ref}
-      className="artwork media-tile__image"
+      className={`artwork media-tile__image ${className}`.trim()}
       style={{ width: px, '--shift': `${colorShift(fallbackSeed)}deg` }}
       {...hoverAttrs}
     >
@@ -66,10 +72,10 @@ export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSee
           decoding="async"
           width={numericPx}
           height={numericPx}
-          onLoad={() => rememberArtworkAvailability(src, true)}
+          onLoad={() => rememberArtworkAvailability(resolvedSrc, true)}
           onError={() => {
             setFailed(true);
-            rememberArtworkAvailability(src, false);
+            rememberArtworkAvailability(resolvedSrc, false);
           }}
         />
       ) : (
