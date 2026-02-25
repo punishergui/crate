@@ -9,7 +9,6 @@ import CoverTile from './ui/components/CoverTile';
 import {
   getAlbumArtDiagnoseUrl,
   getAlbumArtRescanUrl,
-  getAlbumArtUrl,
   getArtistArtDiagnoseUrl,
   getArtistArtRescanUrl
 } from './ui/lib/artwork';
@@ -203,7 +202,7 @@ function TopBar({ scanStatus, onScan }) {
           const title = row.type === 'artist' ? item.name : item.title;
           const subtitle = row.type === 'artist' ? 'Artist' : `${item.artistName || 'Unknown artist'}`;
           return <button key={row.key} className={`top-search-row ${activeIndex === index ? 'active' : ''}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => goToRow(row)}>
-            <Artwork src={row.type === 'artist' ? `/api/artwork/artist/${item.id}?size=256` : `/api/artwork/album/${item.id}?size=256`} alt={title} fallbackSeed={`${subtitle} ${title}`} size="sm" popout popoutTitle={title} popoutSubtitle={subtitle} />
+            <Artwork kind={row.type} id={item.id} title={title} subtitle={subtitle} alt={title} fallbackSeed={`${subtitle} ${title}`} size="sm" popout popoutTitle={title} popoutSubtitle={subtitle} />
             <span><strong>{title}</strong><small className="muted">{subtitle}</small></span>
           </button>;
         }) : null}
@@ -231,7 +230,7 @@ function Library() {
   return <section className="page-stack"><div className="split-head"><h1>Library</h1><div className="inline-actions"><button className={`btn ${mode === 'art-grid' ? 'btn-accent' : ''}`} onClick={() => setMode('art-grid')}>Art Grid</button><button className={`btn ${mode === 'compact-list' ? 'btn-accent' : ''}`} onClick={() => setMode('compact-list')}>Compact List</button></div></div><input value={q} onChange={(e) => setQ(e.target.value)} className="input" placeholder="Filter by artist or album" />
     <div className={mode === 'art-grid' ? 'album-grid' : 'simple-list'}>{list.items.map((item) => mode === 'art-grid'
       ? <article key={item.id} className="album-grid-tile"><CoverTile size="md" albumId={item} title={item.title} subtitle={item.artistName} /><strong>{item.title}</strong><span className="muted">{item.artistName}</span><ArtworkInspector title={item.title} diagnoseUrl={getAlbumArtDiagnoseUrl(item.id)} rescanUrl={getAlbumArtRescanUrl(item.id)} />{item.artistId ? <ArtworkInspector title={item.artistName || 'Artist'} diagnoseUrl={getArtistArtDiagnoseUrl(item.artistId)} rescanUrl={getArtistArtRescanUrl(item.artistId)} /> : null}</article>
-      : <article key={item.id} className="list-item"><div className="media-row"><Artwork src={getAlbumArtUrl(item, 256)} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" popout popoutTitle={item.title} popoutSubtitle={item.artistName} /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
+      : <article key={item.id} className="list-item"><div className="media-row"><Artwork kind="album" id={item.id} title={item.title} subtitle={item.artistName} alt={`${item.title} cover`} fallbackSeed={`${item.artistName} ${item.title}`} size="sm" popout popoutTitle={item.title} popoutSubtitle={item.artistName} /><div><strong>{item.title}</strong><span>{item.artistName}</span></div></div></article>)}{!list.items.length ? <p className="muted">No albums found.</p> : null}</div></section>;
 }
 
 
@@ -463,8 +462,8 @@ function SearchPage() {
   return <section className="page-stack"><h1>Search</h1><p className="muted">Query: {q || '—'}</p>
     {state.loading ? <p className="muted">Loading results…</p> : null}
     {state.error ? <p className="muted">{state.error}</p> : null}
-    <AppCard title="Artists"><div className="simple-list">{state.artists.map((artist) => <Link key={artist.id} to={`/artists/${artist.id}`} className="top-search-row"><Artwork src={`/api/artwork/artist/${artist.id}?size=256`} alt={artist.name} fallbackSeed={artist.name} size="sm" popout popoutTitle={artist.name} popoutSubtitle="Artist" /><span><strong>{artist.name}</strong><small className="muted">Artist</small></span></Link>)}{!state.artists.length ? <p className="muted">No artists.</p> : null}</div></AppCard>
-    <AppCard title="Albums"><div className="simple-list">{state.albums.map((album) => <Link key={album.id} to={`/albums/${album.id}`} className="top-search-row"><Artwork src={getAlbumArtUrl(album.id, 256)} alt={album.title} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size="sm" popout popoutTitle={album.title} popoutSubtitle={album.artistName || 'Unknown artist'} /><span><strong>{album.title}</strong><small className="muted">{album.artistName || 'Unknown artist'}</small></span></Link>)}{!state.albums.length ? <p className="muted">No albums.</p> : null}</div></AppCard>
+    <AppCard title="Artists"><div className="simple-list">{state.artists.map((artist) => <Link key={artist.id} to={`/artists/${artist.id}`} className="top-search-row"><Artwork kind="artist" id={artist.id} title={artist.name} subtitle="Artist" alt={artist.name} fallbackSeed={artist.name} size="sm" popout popoutTitle={artist.name} popoutSubtitle="Artist" /><span><strong>{artist.name}</strong><small className="muted">Artist</small></span></Link>)}{!state.artists.length ? <p className="muted">No artists.</p> : null}</div></AppCard>
+    <AppCard title="Albums"><div className="simple-list">{state.albums.map((album) => <Link key={album.id} to={`/albums/${album.id}`} className="top-search-row"><Artwork kind="album" id={album.id} title={album.title} subtitle={album.artistName || 'Unknown artist'} alt={album.title} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size="sm" popout popoutTitle={album.title} popoutSubtitle={album.artistName || 'Unknown artist'} /><span><strong>{album.title}</strong><small className="muted">{album.artistName || 'Unknown artist'}</small></span></Link>)}{!state.albums.length ? <p className="muted">No albums.</p> : null}</div></AppCard>
   </section>;
 }
 
@@ -484,7 +483,7 @@ function AlbumPage() {
   const [payload, setPayload] = React.useState(null);
   React.useEffect(() => { api.get(`/api/library/albums/${albumId}`).then(setPayload).catch(() => setPayload(null)); }, [albumId]);
   return <section className="page-stack"><h1>{payload?.title || 'Album'}</h1>
-    <div className="media-row"><Artwork src={getAlbumArtUrl(albumId, 512)} alt={payload?.title || 'Album cover'} fallbackSeed={`${payload?.artistName || ''} ${payload?.title || ''}`} size="lg" popout popoutTitle={payload?.title || 'Album'} popoutSubtitle={payload?.artistName || 'Unknown artist'} />
+    <div className="media-row"><Artwork kind="album" id={albumId} title={payload?.title || 'Album'} subtitle={payload?.artistName || 'Unknown artist'} alt={payload?.title || 'Album cover'} fallbackSeed={`${payload?.artistName || ''} ${payload?.title || ''}`} size="lg" popout popoutTitle={payload?.title || 'Album'} popoutSubtitle={payload?.artistName || 'Unknown artist'} />
       <div><p className="muted">{payload?.artistName || 'Unknown artist'}</p><p className="muted">Tracks: {payload?.trackCount ?? 0}</p></div></div>
   </section>;
 }

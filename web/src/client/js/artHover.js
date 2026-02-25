@@ -18,15 +18,14 @@ function clampPosition(cx, cy, size) {
 
 function runDevSafetyCheck(root = document) {
   if (!import.meta?.env?.DEV) return;
-  const riskySelectors = ['.albumCardCover', '.artistAvatar', '.artwork'];
-  riskySelectors.forEach((selector) => {
-    root.querySelectorAll(selector).forEach((el) => {
-      if (el.dataset?.artHover === '1') return;
-      if ((el.dataset?.artSrc || '').trim()) return;
-      if (el.querySelector('[data-art-src]')) return;
-      // eslint-disable-next-line no-console
-      console.warn('[artHover] Artwork-like element is missing data-art-src for hover preview', el);
-    });
+  const route = `${window.location.pathname}${window.location.search}`;
+  const riskySelectors = '[class*="cover" i], [class*="thumb" i], .artwork';
+  root.querySelectorAll(riskySelectors).forEach((el) => {
+    if (el.dataset?.artHover === '1') return;
+    if ((el.dataset?.artSrc || '').trim()) return;
+    if (el.querySelector('[data-art-src]')) return;
+    // eslint-disable-next-line no-console
+    console.warn('[artHover] Artwork-like element is missing data-art-src for hover preview', { route, element: el });
   });
 }
 
@@ -38,7 +37,7 @@ export function initArtHover() {
   overlay = document.createElement('div');
   overlay.id = 'artHoverPreview';
   overlay.hidden = true;
-  overlay.innerHTML = '<img id="artHoverImg" alt="" /><div id="artHoverLabel"></div>';
+  overlay.innerHTML = '<img id="artHoverImg" alt="" /><div id="artHoverFallback" aria-hidden="true">♪</div><div id="artHoverMeta"><strong id="artHoverTitle"></strong><span id="artHoverSubtitle"></span></div>';
   document.body.appendChild(overlay);
   return overlay;
 }
@@ -49,13 +48,18 @@ export function attachArtHover(root = document) {
   runDevSafetyCheck(root);
 
   const image = overlay.querySelector('#artHoverImg');
-  const label = overlay.querySelector('#artHoverLabel');
+  const fallback = overlay.querySelector('#artHoverFallback');
+  const titleEl = overlay.querySelector('#artHoverTitle');
+  const subtitleEl = overlay.querySelector('#artHoverSubtitle');
+  const meta = overlay.querySelector('#artHoverMeta');
   let activeTarget = null;
   let pendingSrc = '';
   let rafId = 0;
   let debounceTimer = 0;
   let targetPoint = { x: -9999, y: -9999 };
   let renderedPoint = { x: -9999, y: -9999 };
+  let routeCheckTimer = 0;
+  let lastRoute = `${window.location.pathname}${window.location.search}`;
 
   const hide = () => {
     activeTarget = null;
@@ -85,19 +89,21 @@ export function attachArtHover(root = document) {
   const show = (target, event) => {
     if (!target || isTouchOnly()) return;
     const src = target.dataset.artSrc || '';
-    if (!src) {
-      hide();
-      return;
-    }
     if (src !== pendingSrc) {
       pendingSrc = src;
       window.clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => {
-        image.src = src;
+        image.src = src || '';
       }, 24);
     }
-    label.textContent = target.dataset.artLabel || '';
-    label.hidden = !label.textContent;
+    const title = target.dataset.artTitle || '';
+    const subtitle = target.dataset.artSubtitle || '';
+    titleEl.textContent = title;
+    subtitleEl.textContent = subtitle;
+    subtitleEl.hidden = !subtitle;
+    meta.hidden = !title && !subtitle;
+    fallback.hidden = Boolean(src);
+    image.hidden = !src;
     activeTarget = target;
     moveTo(event);
     overlay.hidden = false;
@@ -130,8 +136,19 @@ export function attachArtHover(root = document) {
   };
 
   const onImageError = () => {
-    hide();
+    image.hidden = true;
+    fallback.hidden = false;
   };
+
+  if (import.meta?.env?.DEV) {
+    routeCheckTimer = window.setInterval(() => {
+      const route = `${window.location.pathname}${window.location.search}`;
+      if (route !== lastRoute) {
+        lastRoute = route;
+        runDevSafetyCheck(root);
+      }
+    }, 300);
+  }
 
   image.addEventListener('error', onImageError);
   root.addEventListener('mouseover', onMouseOver);
@@ -142,6 +159,7 @@ export function attachArtHover(root = document) {
 
   return () => {
     window.clearTimeout(debounceTimer);
+    if (routeCheckTimer) window.clearInterval(routeCheckTimer);
     if (rafId) window.cancelAnimationFrame(rafId);
     image.removeEventListener('error', onImageError);
     root.removeEventListener('mouseover', onMouseOver);

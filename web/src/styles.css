@@ -129,8 +129,11 @@ h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
 .artwork-badge { position: absolute; right: 6px; bottom: 6px; font-size: .62rem; padding: .1rem .35rem; border: 1px solid var(--border); background: rgb(0 0 0 / 50%); border-radius: 999px; }
 #artHoverPreview { position: fixed; top: 0; left: 0; z-index: 90; width: clamp(170px, 24vw, var(--artPopoutSize)); pointer-events: none; border: 1px solid var(--artBorder); background: var(--surface2); box-shadow: 0 16px 44px rgb(0 0 0 / 65%), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); overflow: hidden; border-radius: 0; }
 #artHoverPreview[hidden] { display: none; }
-#artHoverImg { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
-#artHoverLabel { padding: 0.3rem 0.4rem; font-size: .72rem; line-height: 1.25; color: var(--text); background: linear-gradient(180deg, rgb(0 0 0 / 16%), rgb(0 0 0 / 55%)); }
+#artHoverImg, #artHoverFallback { width: 100%; aspect-ratio: 1 / 1; display: grid; place-items: center; }
+#artHoverImg { object-fit: cover; }
+#artHoverFallback { font-weight: 700; background: linear-gradient(135deg, color-mix(in srgb, var(--artPlaceholder1) 82%, transparent) 0%, color-mix(in srgb, var(--artPlaceholder2) 82%, transparent) 100%); }
+#artHoverMeta { padding: 0.3rem 0.4rem; font-size: .72rem; line-height: 1.25; color: var(--text); background: linear-gradient(180deg, rgb(0 0 0 / 16%), rgb(0 0 0 / 55%)); display: grid; }
+#artHoverMeta span { color: var(--muted); }
 @media (hover: none), (pointer: coarse) { #artHoverPreview { display: none !important; } }
 .album-grid { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fill, minmax(var(--artTile), 1fr)); }
 .album-grid-tile { display: grid; gap: .35rem; }
