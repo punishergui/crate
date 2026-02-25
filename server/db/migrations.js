@@ -1,4 +1,3 @@
-const crypto = require('node:crypto');
 const { slugifyArtistName, shortHash } = require('../slug');
 
 const LATEST_SCHEMA_VERSION = 3;
@@ -62,9 +61,70 @@ function normalizeCompareValue(value) {
     .trim();
 }
 
-function createAlbumKeyFromData(artistName, title, year) {
-  const keySrc = `${normalizeCompareValue(artistName)}::${normalizeCompareValue(title)}::${String(year || '').trim()}`;
-  return crypto.createHash('sha1').update(keySrc).digest('hex');
+function normalizeKey(value) {
+  return normalizeCompareValue(value);
+}
+
+function computeAlbumKeyBase(artistName, title, year) {
+  return `${normalizeKey(artistName)}::${normalizeKey(title)}::${String(year || '').trim()}`;
+}
+
+function logAlbumKeyDuplicates(db, label) {
+  const duplicates = db.prepare(`
+    SELECT albumKey, COUNT(*) AS count
+    FROM albums
+    WHERE albumKey IS NOT NULL AND albumKey != ''
+    GROUP BY albumKey
+    HAVING count > 1
+    ORDER BY count DESC, albumKey ASC
+    LIMIT 20
+  `).all();
+  if (duplicates.length > 0) {
+    console.warn(`[migrations] ${label}: top ${duplicates.length} duplicate albumKey values: ${duplicates.map((row) => `${row.albumKey}(${row.count})`).join(', ')}`);
+  }
+  return duplicates;
+}
+
+function ensureUniqueAlbumKeys(db) {
+  const hasYear = columnExists(db, 'albums', 'year');
+  const selectSql = `
+    SELECT albums.id, artists.name AS artistName, albums.title, albums.albumKey, ${hasYear ? 'albums.year AS year' : "'' AS year"}
+    FROM albums
+    LEFT JOIN artists ON artists.id = albums.artistId
+    ORDER BY albums.id ASC
+  `;
+  const rows = db.prepare(selectSql).all();
+  const used = new Map();
+  const updates = [];
+
+  for (const row of rows) {
+    const existingKey = String(row.albumKey || '').trim();
+    const baseKey = computeAlbumKeyBase(row.artistName, row.title, row.year);
+    const preferredKey = existingKey || baseKey;
+    const suffixBase = preferredKey || baseKey || 'album';
+    let candidate = preferredKey || `${suffixBase}::${row.id}`;
+
+    if (used.has(candidate) && used.get(candidate) !== row.id) {
+      candidate = `${suffixBase}::${row.id}`;
+      let bump = 1;
+      while (used.has(candidate) && used.get(candidate) !== row.id) {
+        bump += 1;
+        candidate = `${suffixBase}::${row.id}::${bump}`;
+      }
+    }
+
+    used.set(candidate, row.id);
+    if (candidate !== existingKey) {
+      updates.push({ id: row.id, albumKey: candidate });
+    }
+  }
+
+  const updateKey = db.prepare('UPDATE albums SET albumKey = ? WHERE id = ?');
+  for (const entry of updates) {
+    updateKey.run(entry.albumKey, entry.id);
+  }
+
+  return updates.length;
 }
 
 function ensureMetaTable(db) {
@@ -104,7 +164,6 @@ function migrationV1(db) {
   addColumnIfMissing(db, 'albums', 'pathDir', 'TEXT');
   addColumnIfMissing(db, 'albums', 'albumKey', 'TEXT');
   ensureIndex(db, 'idx_albums_artist_deleted', 'CREATE INDEX idx_albums_artist_deleted ON albums(artistId, deleted)');
-  ensureIndex(db, 'idx_albums_album_key_unique', 'CREATE UNIQUE INDEX idx_albums_album_key_unique ON albums(albumKey)');
 
   addColumnIfMissing(db, 'expected_albums', 'primaryType', 'TEXT');
   addColumnIfMissing(db, 'expected_albums', 'secondaryTypesJson', "TEXT NOT NULL DEFAULT '[]'");
@@ -161,20 +220,35 @@ function migrationV1(db) {
 }
 
 function migrationV2(db) {
-  addColumnIfMissing(db, 'albums', 'albumKey', 'TEXT');
+  // Safe-mode migration: never throw hard on albumKey repair/index issues.
+  // Strategy:
+  // 1) Ensure albumKey column exists.
+  // 2) Log top duplicate albumKey values.
+  // 3) Deterministically backfill/repair albumKey values, suffixing collisions with stable row id.
+  // 4) Create the unique index only after keys are unique.
+  // If anything fails, we log and continue startup to avoid crash-loops.
+  try {
+    addColumnIfMissing(db, 'albums', 'albumKey', 'TEXT');
 
-  const rows = db.prepare(`
-    SELECT albums.id, artists.name AS artistName, albums.title, albums.albumKey
-    FROM albums
-    INNER JOIN artists ON artists.id = albums.artistId
-    WHERE albums.albumKey IS NULL OR albums.albumKey = ''
-  `).all();
-  const update = db.prepare('UPDATE albums SET albumKey = ? WHERE id = ?');
-  for (const row of rows) {
-    update.run(createAlbumKeyFromData(row.artistName, row.title, ''), row.id);
+    const beforeDuplicates = logAlbumKeyDuplicates(db, 'before albumKey repair');
+    if (beforeDuplicates.length > 0 && indexExists(db, 'idx_albums_album_key_unique')) {
+      db.exec('DROP INDEX IF EXISTS idx_albums_album_key_unique');
+      console.warn('[migrations] dropped idx_albums_album_key_unique before repairing duplicate albumKey values');
+    }
+
+    const repairedCount = ensureUniqueAlbumKeys(db);
+    const afterDuplicates = logAlbumKeyDuplicates(db, 'after albumKey repair');
+    console.info(`[migrations] repaired ${repairedCount} albumKey collisions/backfills`);
+
+    if (afterDuplicates.length === 0) {
+      ensureIndex(db, 'idx_albums_album_key_unique', 'CREATE UNIQUE INDEX idx_albums_album_key_unique ON albums(albumKey)');
+    } else {
+      console.error('[migrations] albumKey duplicates still present after repair; leaving unique index uncreated (safe mode)');
+    }
+  } catch (error) {
+    console.error(`[migrations] migrationV2 safe mode: failed to fully repair albumKey values; continuing without enforcing unique index. ${error.message || error}`);
   }
 
-  ensureIndex(db, 'idx_albums_album_key_unique', 'CREATE UNIQUE INDEX idx_albums_album_key_unique ON albums(albumKey)');
   ensureIndex(db, 'idx_expected_artists_artist_id', 'CREATE INDEX idx_expected_artists_artist_id ON expected_artists(artistId)');
   ensureIndex(db, 'idx_file_index_inode', 'CREATE INDEX idx_file_index_inode ON file_index(inodeKey)');
   ensureIndex(db, 'idx_file_index_hash', 'CREATE INDEX idx_file_index_hash ON file_index(fileHash)');
@@ -249,6 +323,10 @@ module.exports = {
   columnExists,
   addColumnIfMissing,
   ensureIndex,
+  normalizeKey,
+  computeAlbumKeyBase,
+  ensureUniqueAlbumKeys,
+  migrationV2,
   getSchemaVersion,
   setSchemaVersion,
 };

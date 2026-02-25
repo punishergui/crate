@@ -449,7 +449,7 @@ class Scanner {
   upsertAlbum({ artistId, title, albumPath, pathDir, albumKey, seenAt, formats, trackCount, lastFileMtime }) {
     const formatsJson = JSON.stringify(Array.from(formats).sort());
     const existing = (albumKey
-      ? this.db.prepare('SELECT id FROM albums WHERE albumKey = ?').get(albumKey)
+      ? this.db.prepare('SELECT id FROM albums WHERE albumKey = ? ORDER BY id DESC LIMIT 1').get(albumKey)
       : null) || this.db.prepare('SELECT id FROM albums WHERE path = ?').get(albumPath);
     if (existing) {
       this.db.prepare(`
