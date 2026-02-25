@@ -1,7 +1,7 @@
 const OFFSET = 20;
 const EDGE_GUTTER = 10;
 const TOUCH_MEDIA = '(hover: none), (pointer: coarse)';
-const ART_SELECTOR = '[data-art-hover="1"]';
+const ART_SELECTOR = '[data-art-hover="1"], img[data-art-hover="1"]';
 
 function isTouchOnly() {
   return window.matchMedia(TOUCH_MEDIA).matches;
@@ -14,6 +14,20 @@ function clampPosition(cx, cy, size) {
     x: Math.max(EDGE_GUTTER, Math.min(maxX, cx + OFFSET)),
     y: Math.max(EDGE_GUTTER, Math.min(maxY, cy + OFFSET))
   };
+}
+
+function runDevSafetyCheck(root = document) {
+  if (!import.meta?.env?.DEV) return;
+  const riskySelectors = ['.albumCardCover', '.artistAvatar', '.artwork'];
+  riskySelectors.forEach((selector) => {
+    root.querySelectorAll(selector).forEach((el) => {
+      if (el.dataset?.artHover === '1') return;
+      if ((el.dataset?.artSrc || '').trim()) return;
+      if (el.querySelector('[data-art-src]')) return;
+      // eslint-disable-next-line no-console
+      console.warn('[artHover] Artwork-like element is missing data-art-src for hover preview', el);
+    });
+  });
 }
 
 export function initArtHover() {
@@ -32,6 +46,7 @@ export function initArtHover() {
 export function attachArtHover(root = document) {
   const overlay = initArtHover();
   if (!overlay) return () => {};
+  runDevSafetyCheck(root);
 
   const image = overlay.querySelector('#artHoverImg');
   const label = overlay.querySelector('#artHoverLabel');
@@ -88,15 +103,17 @@ export function attachArtHover(root = document) {
     overlay.hidden = false;
   };
 
+  const findArtTarget = (event) => event.target?.closest?.('[data-art-hover="1"]');
+
   const onMouseOver = (event) => {
-    const target = event.target?.closest?.(ART_SELECTOR);
+    const target = findArtTarget(event);
     if (!target || !root.contains(target)) return;
     show(target, event);
   };
 
   const onMouseMove = (event) => {
     if (overlay.hidden) return;
-    const target = event.target?.closest?.(ART_SELECTOR);
+    const target = findArtTarget(event);
     if (!target || !root.contains(target)) {
       hide();
       return;

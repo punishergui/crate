@@ -28,6 +28,15 @@ export function getKnownArtworkAvailability(id) {
   return hasArtworkCache.has(String(id)) ? hasArtworkCache.get(String(id)) : null;
 }
 
+export function buildArtHoverAttrs({ src = '', label = '', enabled = true } = {}) {
+  if (!enabled) return {};
+  return {
+    'data-art-hover': '1',
+    'data-art-src': src || '',
+    'data-art-label': label || ''
+  };
+}
+
 
 export function resolveArtworkUrl(type, id, size = 256) {
   const numericId = firstNumber(id);

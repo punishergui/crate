@@ -1,5 +1,5 @@
 import React from 'react';
-import { getBestArtworkSize, getKnownArtworkAvailability, rememberArtworkAvailability } from '../lib/artwork';
+import { buildArtHoverAttrs, getBestArtworkSize, getKnownArtworkAvailability, rememberArtworkAvailability } from '../lib/artwork';
 
 const SIZE_MAP = { xs: 28, sm: 48, md: 88, lg: 140, xl: 220, tile: 'var(--tile-size, 128px)', 'tile-lg': 'var(--tile-size-lg, 160px)' };
 
@@ -16,7 +16,7 @@ function colorShift(seed = '') {
   return Math.abs(hash % 40);
 }
 
-export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSeed = '', overlay = null, popout = false, popoutTitle = '', popoutSubtitle = '', badge = '', widthPx = null }) {
+export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSeed = '', overlay = null, popout = true, popoutTitle = '', popoutSubtitle = '', badge = '', widthPx = null }) {
   const [failed, setFailed] = React.useState(false);
   const ref = React.useRef(null);
   const [visible, setVisible] = React.useState(false);
@@ -44,17 +44,19 @@ export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSee
   const imgSize = getBestArtworkSize(numericPx);
   const resolvedSrc = src ? src.replace(/size=\d+/, `size=${imgSize}`) : src;
   const showImage = Boolean(resolvedSrc && !failed && visible);
-  const shouldPopout = true;
   const initials = initialsFromSeed(fallbackSeed || alt);
+  const hoverAttrs = buildArtHoverAttrs({
+    enabled: popout,
+    src: showImage ? resolvedSrc : '',
+    label: [popoutTitle || alt, popoutSubtitle].filter(Boolean).join(' — ')
+  });
 
   return (
     <div
       ref={ref}
       className="artwork media-tile__image"
       style={{ width: px, '--shift': `${colorShift(fallbackSeed)}deg` }}
-      data-art-hover={shouldPopout ? '1' : undefined}
-      data-art-src={shouldPopout && showImage ? resolvedSrc : ''}
-      data-art-label={shouldPopout ? [popoutTitle || alt, popoutSubtitle].filter(Boolean).join(' · ') : undefined}
+      {...hoverAttrs}
     >
       {showImage ? (
         <img

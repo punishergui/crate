@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from './lib/api';
 import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
@@ -113,8 +113,102 @@ function AppCard({ title, children, right }) {
 }
 
 function TopBar({ scanStatus, onScan }) {
+  const navigate = useNavigate();
+  const [query, setQuery] = React.useState('');
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [results, setResults] = React.useState({ artists: [], albums: [], tracks: [] });
+  const [error, setError] = React.useState('');
+  const [activeIndex, setActiveIndex] = React.useState(-1);
+  const reqRef = React.useRef(0);
+  const rootRef = React.useRef(null);
+
+  const rows = React.useMemo(() => ([
+    ...results.artists.map((artist) => ({ key: `artist-${artist.id}`, type: 'artist', item: artist })),
+    ...results.albums.map((album) => ({ key: `album-${album.id}`, type: 'album', item: album }))
+  ]), [results]);
+
+  React.useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setResults({ artists: [], albums: [], tracks: [] });
+      setIsOpen(false);
+      setIsLoading(false);
+      setError('');
+      setActiveIndex(-1);
+      return undefined;
+    }
+
+    const requestId = reqRef.current + 1;
+    reqRef.current = requestId;
+    const timer = window.setTimeout(async () => {
+      setIsLoading(true);
+      setError('');
+      try {
+        const payload = await api.get(`/api/search?q=${encodeURIComponent(trimmed)}&limit=8`);
+        if (requestId !== reqRef.current) return;
+        setResults({ artists: payload.artists || [], albums: payload.albums || [], tracks: payload.tracks || [] });
+        setIsOpen(true);
+        setActiveIndex(-1);
+      } catch (e) {
+        if (requestId !== reqRef.current) return;
+        setResults({ artists: [], albums: [], tracks: [] });
+        setError(e.message || 'Search failed');
+        setIsOpen(true);
+      } finally {
+        if (requestId === reqRef.current) setIsLoading(false);
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  React.useEffect(() => {
+    const onDocClick = (event) => {
+      if (!rootRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const goToSearch = () => {
+    const trimmed = query.trim();
+    navigate(`/search?q=${encodeURIComponent(trimmed)}`);
+    setIsOpen(false);
+  };
+
+  const goToRow = (row) => {
+    if (!row) return;
+    if (row.type === 'artist') navigate(`/artists/${row.item.id}`);
+    if (row.type === 'album') navigate(`/albums/${row.item.id}`);
+    setIsOpen(false);
+  };
+
   return <header className="top-bar">
-    <label className="top-search-wrap" htmlFor="global-search"><span className="sr-only">Search</span><input id="global-search" className="top-search" placeholder="Search artists, albums, tracks" /></label>
+    <div className="top-search-wrap" ref={rootRef}><label htmlFor="global-search"><span className="sr-only">Search</span></label><input id="global-search" className="top-search" placeholder="Search artists, albums, tracks" value={query} onFocus={() => { if (rows.length || error) setIsOpen(true); }} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+      if (event.key === 'Escape') { setIsOpen(false); return; }
+      if (event.key === 'ArrowDown') { event.preventDefault(); setIsOpen(true); setActiveIndex((idx) => Math.min(rows.length - 1, idx + 1)); return; }
+      if (event.key === 'ArrowUp') { event.preventDefault(); setIsOpen(true); setActiveIndex((idx) => Math.max(0, idx - 1)); return; }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (activeIndex >= 0 && rows[activeIndex]) goToRow(rows[activeIndex]);
+        else goToSearch();
+      }
+    }} />
+      {isOpen ? <div className="top-search-dropdown">{isLoading ? <div className="top-search-row muted">Searching…</div> : null}
+        {error ? <div className="top-search-row muted">{error}</div> : null}
+        {!isLoading && !error && !rows.length ? <div className="top-search-row muted">No results</div> : null}
+        {!isLoading && !error ? rows.map((row, index) => {
+          const item = row.item;
+          const title = row.type === 'artist' ? item.name : item.title;
+          const subtitle = row.type === 'artist' ? 'Artist' : `${item.artistName || 'Unknown artist'}`;
+          return <button key={row.key} className={`top-search-row ${activeIndex === index ? 'active' : ''}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => goToRow(row)}>
+            <Artwork src={row.type === 'artist' ? `/api/artwork/artist/${item.id}?size=256` : `/api/artwork/album/${item.id}?size=256`} alt={title} fallbackSeed={`${subtitle} ${title}`} size="sm" popout popoutTitle={title} popoutSubtitle={subtitle} />
+            <span><strong>{title}</strong><small className="muted">{subtitle}</small></span>
+          </button>;
+        }) : null}
+      </div> : null}
+    </div>
     <div className="top-actions"><div className="status-pill" aria-live="polite"><span className={`status-dot ${scanStatus?.status === 'running' ? 'running' : ''}`} /><span>{scanStatus?.status || 'idle'}</span></div><button className="btn btn-accent" onClick={onScan}>Start Scan</button></div>
   </header>;
 }
@@ -343,6 +437,58 @@ function RepairCenterPage({ onStartScan }) {
       {status ? <p className="muted">{status}</p> : null}
     </div></div></section>;
 }
+
+function SearchPage() {
+  const [params] = useSearchParams();
+  const q = (params.get('q') || '').trim();
+  const [state, setState] = React.useState({ loading: false, error: '', artists: [], albums: [], tracks: [] });
+
+  React.useEffect(() => {
+    if (q.length < 2) {
+      setState({ loading: false, error: '', artists: [], albums: [], tracks: [] });
+      return;
+    }
+    let cancelled = false;
+    setState((prev) => ({ ...prev, loading: true, error: '' }));
+    api.get(`/api/search?q=${encodeURIComponent(q)}&limit=50`).then((payload) => {
+      if (cancelled) return;
+      setState({ loading: false, error: '', artists: payload.artists || [], albums: payload.albums || [], tracks: payload.tracks || [] });
+    }).catch((error) => {
+      if (cancelled) return;
+      setState({ loading: false, error: error.message || 'Search failed', artists: [], albums: [], tracks: [] });
+    });
+    return () => { cancelled = true; };
+  }, [q]);
+
+  return <section className="page-stack"><h1>Search</h1><p className="muted">Query: {q || '—'}</p>
+    {state.loading ? <p className="muted">Loading results…</p> : null}
+    {state.error ? <p className="muted">{state.error}</p> : null}
+    <AppCard title="Artists"><div className="simple-list">{state.artists.map((artist) => <Link key={artist.id} to={`/artists/${artist.id}`} className="top-search-row"><Artwork src={`/api/artwork/artist/${artist.id}?size=256`} alt={artist.name} fallbackSeed={artist.name} size="sm" popout popoutTitle={artist.name} popoutSubtitle="Artist" /><span><strong>{artist.name}</strong><small className="muted">Artist</small></span></Link>)}{!state.artists.length ? <p className="muted">No artists.</p> : null}</div></AppCard>
+    <AppCard title="Albums"><div className="simple-list">{state.albums.map((album) => <Link key={album.id} to={`/albums/${album.id}`} className="top-search-row"><Artwork src={getAlbumArtUrl(album.id, 256)} alt={album.title} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size="sm" popout popoutTitle={album.title} popoutSubtitle={album.artistName || 'Unknown artist'} /><span><strong>{album.title}</strong><small className="muted">{album.artistName || 'Unknown artist'}</small></span></Link>)}{!state.albums.length ? <p className="muted">No albums.</p> : null}</div></AppCard>
+  </section>;
+}
+
+function ArtistPage() {
+  const location = useLocation();
+  const artistId = Number(location.pathname.split('/').pop());
+  const [payload, setPayload] = React.useState(null);
+  React.useEffect(() => { api.get(`/api/library/artists/${artistId}`).then(setPayload).catch(() => setPayload(null)); }, [artistId]);
+  return <section className="page-stack"><h1>{payload?.artist?.name || 'Artist'}</h1>
+    <div className="album-grid">{(payload?.albums || []).map((item) => <article key={item.id} className="album-grid-tile"><CoverTile size="md" albumId={item.id} title={item.title} subtitle={payload?.artist?.name} /><strong>{item.title}</strong></article>)}</div>
+  </section>;
+}
+
+function AlbumPage() {
+  const location = useLocation();
+  const albumId = Number(location.pathname.split('/').pop());
+  const [payload, setPayload] = React.useState(null);
+  React.useEffect(() => { api.get(`/api/library/albums/${albumId}`).then(setPayload).catch(() => setPayload(null)); }, [albumId]);
+  return <section className="page-stack"><h1>{payload?.title || 'Album'}</h1>
+    <div className="media-row"><Artwork src={getAlbumArtUrl(albumId, 512)} alt={payload?.title || 'Album cover'} fallbackSeed={`${payload?.artistName || ''} ${payload?.title || ''}`} size="lg" popout popoutTitle={payload?.title || 'Album'} popoutSubtitle={payload?.artistName || 'Unknown artist'} />
+      <div><p className="muted">{payload?.artistName || 'Unknown artist'}</p><p className="muted">Tracks: {payload?.trackCount ?? 0}</p></div></div>
+  </section>;
+}
+
 function App() {
   const [scanStatus, setScanStatus] = useScanStatusPolling();
   const [uiSettings, setUiSettings] = React.useState(getUiArtSettings);
@@ -358,6 +504,9 @@ function App() {
       <Route path="/library" element={<Library />} />
       <Route path="/scan-report" element={<ScanReportPage scanStatus={scanStatus} setScanStatus={setScanStatus} onStartScan={startScan} />} />
       <Route path="/repair" element={<RepairCenterPage onStartScan={startScan} />} />
+      <Route path="/search" element={<SearchPage />} />
+      <Route path="/artists/:id" element={<ArtistPage />} />
+      <Route path="/albums/:id" element={<AlbumPage />} />
       <Route path="/settings/themes" element={<ThemesSettingsPage />} />
       <Route path="/settings/appearance" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
       <Route path="/settings/artwork" element={<ArtworkSettingsPage />} />

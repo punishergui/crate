@@ -28,6 +28,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .content { padding: 1rem 1.25rem 5rem; position: relative; z-index: 1; }
 .top-bar { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 0.8rem; margin-bottom: 1rem; }
 .top-search, .input { width: 100%; }
+
+.top-search-wrap { position: relative; }
+.top-search-dropdown { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 20; border: 1px solid var(--border); background: var(--surface); display: grid; max-height: min(60vh, 480px); overflow: auto; }
+.top-search-row { display: grid; grid-template-columns: 52px 1fr; gap: 0.6rem; align-items: center; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 0.5rem; background: transparent; cursor: pointer; }
+.top-search-row.active, .top-search-row:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.top-search-row small { display: block; }
+.media-row { display: flex; gap: 0.7rem; align-items: center; }
+
 .top-actions { display: flex; gap: 0.6rem; align-items: center; }
 .status-pill { display: inline-flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border); border-radius: 999px; padding: 0.4rem 0.75rem; color: var(--muted); }
 .status-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--muted); }

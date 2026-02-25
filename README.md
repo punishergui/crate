@@ -102,3 +102,10 @@ curl http://10.0.10.10:4010/api/dashboard
 Reminder
 - App data (DB/cache/logs) lives under `/data`
 - Library mount should be available under `/music`
+
+
+## Search & Artwork Hover Dev Checks
+
+- Search `New Found Glory` in the top bar and verify artists include **New Found Glory**.
+- Search `Waiting` in the top bar and verify albums include **Waiting**.
+- Hover album/artist covers in the search dropdown or `/search?q=...` page and verify the artwork popout appears.

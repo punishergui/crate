@@ -729,6 +729,33 @@ app.post('/api/library/rebuild', async (req, reply) => {
   return { ok: true };
 });
 
+
+app.get('/api/search', async (req, reply) => {
+  const q = String(req.query.q || '').trim();
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
+  if (q.length < 2) return { artists: [], albums: [], tracks: [] };
+
+  const like = `%${q}%`;
+  const artists = db.prepare(`
+    SELECT ar.id, ar.name, ar.slug, ar.artworkSource
+    FROM artists ar
+    WHERE ar.deleted = 0 AND ar.name LIKE @q
+    ORDER BY ar.name ASC
+    LIMIT @limit
+  `).all({ q: like, limit });
+
+  const albums = db.prepare(`
+    SELECT al.id, al.title, al.artistId, ar.name AS artistName, ar.slug AS artistSlug, al.artworkSource
+    FROM albums al
+    JOIN artists ar ON ar.id = al.artistId
+    WHERE al.deleted = 0 AND (al.title LIKE @q OR ar.name LIKE @q)
+    ORDER BY al.lastFileMtime DESC, al.id DESC
+    LIMIT @limit
+  `).all({ q: like, limit });
+
+  return { artists, albums, tracks: [] };
+});
+
 app.get('/api/library/albums', async (req, reply) => {
   const page = Math.max(1, Number(req.query.page || 1));
   const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize || 24)));
@@ -766,6 +793,32 @@ app.get('/api/library/albums', async (req, reply) => {
   `).get(search ? { q: `%${search}%` } : {}).c;
 
   return { items, total };
+});
+
+
+app.get('/api/library/albums/:id', async (req, reply) => {
+  const albumId = Number(req.params.id);
+  if (!Number.isInteger(albumId) || albumId < 1) {
+    return reply.code(400).send({ error: 'invalid album id' });
+  }
+
+  const album = db.prepare(`
+    SELECT al.id, al.title, al.path, al.lastFileMtime, al.formatsJson, al.trackCount, al.artistId,
+      ar.name AS artistName, ar.slug AS artistSlug, al.artworkSource
+    FROM albums al
+    JOIN artists ar ON ar.id = al.artistId
+    WHERE al.id = ? AND al.deleted = 0
+  `).get(albumId);
+  if (!album) return reply.code(404).send({ error: 'Album not found' });
+
+  const tracks = db.prepare(`
+    SELECT id, path, ext, mtime
+    FROM tracks
+    WHERE albumId = ? AND deleted = 0
+    ORDER BY id
+  `).all(albumId);
+
+  return { ...album, formats: JSON.parse(album.formatsJson || '[]'), tracks };
 });
 
 app.put('/api/library/albums/:id/owned', async (req, reply) => {
