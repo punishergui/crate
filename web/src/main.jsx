@@ -6,6 +6,7 @@ import { registerSW } from 'virtual:pwa-register';
 import DashboardPage from './ui/dashboard/dashboard';
 import Artwork from './ui/components/Artwork';
 import CoverTile from './ui/components/CoverTile';
+import HoverPreviewLayer from './ui/components/HoverPreviewLayer';
 import {
   getAlbumArtDiagnoseUrl,
   getAlbumArtRescanUrl,
@@ -75,18 +76,6 @@ function applyUiArtSettings(settings) {
 
 
 function safeParseDetails(raw) { if (!raw) return {}; try { return JSON.parse(raw); } catch { return { raw }; } }
-
-function useArtHover(enabled) {
-  React.useEffect(() => {
-    let cleanup = () => {};
-    if (!enabled) return cleanup;
-    import('./client/js/artHover').then((mod) => {
-      mod.initArtHover();
-      cleanup = mod.attachArtHover(document);
-    }).catch(() => {});
-    return () => cleanup();
-  }, [enabled]);
-}
 
 function formatDate(value) { if (!value) return '—'; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString(); }
 
@@ -492,7 +481,6 @@ function App() {
   const [scanStatus, setScanStatus] = useScanStatusPolling();
   const [uiSettings, setUiSettings] = React.useState(getUiArtSettings);
   const [scanSettings, setScanSettings] = React.useState({ scanMaxDepth: 3, scanIgnoreHiddenPaths: true, scanGroupByFolder: true, scanTreatArtistRootLooseTracksAsSingles: true, scanIncludeDiscSubfolders: true, scanIncludeSingles: true, scanTreatCompilationAsSeparate: false, scanIgnoreFolderNames: ['.crate','_tmp','@eaDir'] });
-  useArtHover(uiSettings.hoverPopout);
   React.useEffect(() => { applyUiArtSettings(uiSettings); localStorage.setItem(UI_ART_KEY, JSON.stringify(uiSettings)); }, [uiSettings]);
   React.useEffect(() => { api.get('/api/settings/scan').then((payload) => setScanSettings(payload)).catch(() => null); }, []);
   const startScan = React.useCallback(async () => { const payload = await api.post('/api/scan/start', { maxDepth: scanSettings.scanMaxDepth }); if (payload?.status) setScanStatus(payload.status); return payload; }, [setScanStatus, scanSettings.scanMaxDepth]);
@@ -519,6 +507,7 @@ function App() {
       <Route path="/settings" element={<AppearanceSettingsPage uiSettings={uiSettings} setUiSettings={setUiSettings} />} />
     </Routes></main>
     <nav className="mobile-nav">{NAV_ITEMS.map((item) => <NavLink key={item.to} to={item.to} end={item.to === '/'}>{item.label}</NavLink>)}</nav>
+    <HoverPreviewLayer enabled={uiSettings.hoverPopout} />
   </div>;
 }
 
