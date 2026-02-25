@@ -5,8 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 
-const { initDb, LATEST_SCHEMA_VERSION } = require('../server/db');
-const { migrationV2 } = require('../server/db/migrations');
+const { initDb } = require('../server/db');
+const { migrationV2, LATEST_SCHEMA_VERSION } = require('../server/db/migrations');
 
 function createLegacyDb(dbPath) {
   const db = new Database(dbPath);
@@ -215,7 +215,7 @@ test('initDb migrates legacy schema and writes schema version into meta', () => 
   assert.ok(settingsColumns.includes('scanIncludeSingles'));
 
   const settingsRow = db.prepare('SELECT scanIgnoreFolderNames, scanMaxDepth, scanIncludeDiscSubfolders, scanIncludeSingles FROM settings WHERE id = 1').get();
-  assert.equal(settingsRow.scanIgnoreFolderNames, '.crate,_tmp,@eaDir');
+  assert.equal(settingsRow.scanIgnoreFolderNames, '[]');
   assert.equal(settingsRow.scanMaxDepth, 3);
   assert.equal(settingsRow.scanIncludeDiscSubfolders, 1);
   assert.equal(settingsRow.scanIncludeSingles, 1);
@@ -306,6 +306,38 @@ test('migrationV2 repairs colliding albumKey values and allows unique index crea
 
   db.exec('DROP INDEX IF EXISTS idx_albums_album_key_unique');
   db.exec('CREATE UNIQUE INDEX idx_albums_album_key_unique ON albums(albumKey)');
+
+  db.close();
+});
+
+
+test('initDb survives a failing migration and reports degraded runtime', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-db-degraded-'));
+  const dbPath = path.join(tmpDir, 'degraded.sqlite');
+
+  const brokenMigration = {
+    name: 'migration_v4_forced_failure',
+    run: () => {
+      throw new Error('forced migration failure for test');
+    }
+  };
+
+  const db = initDb({
+    dbPath,
+    migrations: [
+      { name: 'migration_v1', run: (innerDb) => innerDb.prepare('SELECT 1').get() },
+      { name: 'migration_v2', run: (innerDb) => innerDb.prepare('SELECT 1').get() },
+      { name: 'migration_v3', run: (innerDb) => innerDb.prepare('SELECT 1').get() },
+      brokenMigration,
+    ]
+  });
+
+  assert.equal(db.crateRuntime.degraded, true);
+  assert.ok(db.crateRuntime.migrationErrors.some((entry) => entry.name === 'migration_v4_forced_failure'));
+
+  const failedMigration = db.prepare("SELECT status, errorText FROM migrations WHERE name = 'migration_v4_forced_failure'").get();
+  assert.equal(failedMigration.status, 'failed');
+  assert.match(failedMigration.errorText, /forced migration failure/);
 
   db.close();
 });

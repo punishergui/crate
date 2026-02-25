@@ -2,6 +2,29 @@ const { slugifyArtistName, shortHash } = require('../slug');
 
 const LATEST_SCHEMA_VERSION = 3;
 
+const SETTINGS_COLUMN_DEFS = [
+  { name: 'lidarrEnabled', clause: 'INTEGER NOT NULL DEFAULT 0', defaultExpr: '0' },
+  { name: 'lidarrBaseUrl', clause: "TEXT NOT NULL DEFAULT ''", defaultExpr: "''" },
+  { name: 'lidarrApiKey', clause: "TEXT NOT NULL DEFAULT ''", defaultExpr: "''" },
+  { name: 'lidarrQualityProfileId', clause: 'INTEGER', defaultExpr: 'NULL' },
+  { name: 'lidarrRootFolderPath', clause: 'TEXT', defaultExpr: 'NULL' },
+  { name: 'artworkPreferLocal', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'artworkAllowRemote', clause: 'INTEGER NOT NULL DEFAULT 0', defaultExpr: '0' },
+  { name: 'artworkPreferEmbedded', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'artworkPreferFolder', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'artworkCacheEnabled', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'artworkDefaultSize', clause: 'INTEGER NOT NULL DEFAULT 512', defaultExpr: '512' },
+  { name: 'artworkFolderFilenames', clause: "TEXT NOT NULL DEFAULT 'cover,folder,front,album'", defaultExpr: "'cover,folder,front,album'" },
+  { name: 'scanMaxDepth', clause: 'INTEGER NOT NULL DEFAULT 3', defaultExpr: '3' },
+  { name: 'scanIgnoreHiddenPaths', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'scanGroupByFolder', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'scanTreatArtistRootLooseTracksAsSingles', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'scanIncludeDiscSubfolders', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'scanIncludeSingles', clause: 'INTEGER NOT NULL DEFAULT 1', defaultExpr: '1' },
+  { name: 'scanTreatCompilationAsSeparate', clause: 'INTEGER NOT NULL DEFAULT 0', defaultExpr: '0' },
+  { name: 'scanIgnoreFolderNames', clause: "TEXT NOT NULL DEFAULT '[]'", defaultExpr: "'[]'" },
+];
+
 function tableExists(db, name) {
   const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
   return Boolean(row);
@@ -31,6 +54,60 @@ function ensureIndex(db, name, ddl) {
     return true;
   }
   return false;
+}
+
+function ensureMigrationsTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      appliedAt TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('ok', 'failed')),
+      errorText TEXT
+    )
+  `);
+}
+
+function getMigrationRecords(db) {
+  ensureMigrationsTable(db);
+  return db.prepare('SELECT id, name, appliedAt, status, errorText FROM migrations ORDER BY id ASC').all();
+}
+
+function isMigrationOk(db, name) {
+  const row = db.prepare('SELECT status FROM migrations WHERE name = ?').get(name);
+  return row?.status === 'ok';
+}
+
+function recordMigration(db, name, status, errorText = null) {
+  ensureMigrationsTable(db);
+  db.prepare(`
+    INSERT INTO migrations(name, appliedAt, status, errorText)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET
+      appliedAt = excluded.appliedAt,
+      status = excluded.status,
+      errorText = excluded.errorText
+  `).run(name, new Date().toISOString(), status, errorText);
+}
+
+function ensureSettingsColumns(db) {
+  if (!tableExists(db, 'settings')) return { added: [], healed: [] };
+
+  const added = [];
+  for (const def of SETTINGS_COLUMN_DEFS) {
+    if (addColumnIfMissing(db, 'settings', def.name, def.clause)) {
+      added.push(def.name);
+    }
+  }
+
+  const present = new Set(db.prepare('PRAGMA table_info(settings)').all().map((row) => row.name));
+  const healingTargets = SETTINGS_COLUMN_DEFS.filter((def) => present.has(def.name));
+  if (healingTargets.length === 0) return { added, healed: [] };
+
+  const setClause = healingTargets.map((def) => `${def.name} = COALESCE(${def.name}, ${def.defaultExpr})`).join(',\n    ');
+  db.prepare(`UPDATE settings SET ${setClause}`).run();
+
+  return { added, healed: healingTargets.map((def) => def.name) };
 }
 
 function buildArtistSlug(db, name, rowId = null) {
@@ -177,33 +254,7 @@ function migrationV1(db) {
     db.exec('DROP TABLE expected_ignored');
   }
 
-  addColumnIfMissing(db, 'settings', 'lidarrEnabled', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing(db, 'settings', 'lidarrBaseUrl', "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing(db, 'settings', 'lidarrApiKey', "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing(db, 'settings', 'lidarrQualityProfileId', 'INTEGER');
-  addColumnIfMissing(db, 'settings', 'lidarrRootFolderPath', 'TEXT');
-  addColumnIfMissing(db, 'settings', 'artworkPreferLocal', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'artworkAllowRemote', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing(db, 'settings', 'artworkPreferEmbedded', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'artworkPreferFolder', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'artworkCacheEnabled', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'artworkDefaultSize', 'INTEGER NOT NULL DEFAULT 512');
-  addColumnIfMissing(db, 'settings', 'artworkFolderFilenames', "TEXT NOT NULL DEFAULT 'cover,folder,front,album'");
-  addColumnIfMissing(db, 'settings', 'scanMaxDepth', 'INTEGER NOT NULL DEFAULT 3');
-  addColumnIfMissing(db, 'settings', 'scanIgnoreHiddenPaths', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'scanGroupByFolder', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'scanTreatArtistRootLooseTracksAsSingles', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'scanIncludeDiscSubfolders', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'scanIncludeSingles', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing(db, 'settings', 'scanTreatCompilationAsSeparate', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing(db, 'settings', 'scanIgnoreFolderNames', "TEXT NOT NULL DEFAULT '.crate,_tmp,@eaDir'");
-
-  db.prepare(`UPDATE settings SET
-    scanMaxDepth = COALESCE(scanMaxDepth, 3),
-    scanIncludeDiscSubfolders = COALESCE(scanIncludeDiscSubfolders, 1),
-    scanIncludeSingles = COALESCE(scanIncludeSingles, 1),
-    scanIgnoreFolderNames = COALESCE(scanIgnoreFolderNames, '.crate,_tmp,@eaDir')
-  WHERE id = 1`).run();
+  ensureSettingsColumns(db);
 
   addColumnIfMissing(db, 'scan_state', 'skippedFiles', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'scan_state', 'skippedReasonsJson', "TEXT NOT NULL DEFAULT '{}'");
@@ -220,13 +271,6 @@ function migrationV1(db) {
 }
 
 function migrationV2(db) {
-  // Safe-mode migration: never throw hard on albumKey repair/index issues.
-  // Strategy:
-  // 1) Ensure albumKey column exists.
-  // 2) Log top duplicate albumKey values.
-  // 3) Deterministically backfill/repair albumKey values, suffixing collisions with stable row id.
-  // 4) Create the unique index only after keys are unique.
-  // If anything fails, we log and continue startup to avoid crash-loops.
   try {
     addColumnIfMissing(db, 'albums', 'albumKey', 'TEXT');
 
@@ -289,35 +333,62 @@ function migrationV3(db) {
   `);
 }
 
-const MIGRATIONS = [migrationV1, migrationV2, migrationV3];
+const MIGRATIONS = [
+  { name: 'migration_v1', run: migrationV1 },
+  { name: 'migration_v2', run: migrationV2 },
+  { name: 'migration_v3', run: migrationV3 },
+];
 
-function repairCriticalSchema(db) {
-  migrationV1(db);
-  migrationV2(db);
-  migrationV3(db);
-}
-
-function applyMigrations(db) {
+function applyMigrations(db, options = {}) {
   ensureMetaTable(db);
-  const hasSchemaVersion = Boolean(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get());
-  const startingVersion = hasSchemaVersion ? getSchemaVersion(db) : 0;
-  for (let index = startingVersion; index < MIGRATIONS.length; index += 1) {
-    const migration = MIGRATIONS[index];
+  ensureMigrationsTable(db);
+
+  const migrationList = options.migrations || MIGRATIONS;
+  const migrationErrors = [];
+
+  for (let index = 0; index < migrationList.length; index += 1) {
+    const migration = migrationList[index];
     const nextVersion = index + 1;
-    db.transaction(() => {
-      migration(db);
-      setSchemaVersion(db, nextVersion);
-    })();
+    if (isMigrationOk(db, migration.name)) {
+      setSchemaVersion(db, Math.max(getSchemaVersion(db), nextVersion));
+      continue;
+    }
+
+    try {
+      db.transaction(() => {
+        migration.run(db);
+        ensureSettingsColumns(db);
+        setSchemaVersion(db, nextVersion);
+        recordMigration(db, migration.name, 'ok', null);
+      })();
+    } catch (error) {
+      const errorText = error?.stack || error?.message || String(error);
+      console.error(`[migrations] ${migration.name} failed`, error);
+      recordMigration(db, migration.name, 'failed', errorText);
+      migrationErrors.push({ name: migration.name, error: errorText });
+    }
   }
 
-  db.transaction(() => {
-    repairCriticalSchema(db);
+  try {
+    ensureSettingsColumns(db);
     setSchemaVersion(db, Math.max(getSchemaVersion(db), LATEST_SCHEMA_VERSION));
-  })();
+  } catch (error) {
+    const errorText = error?.stack || error?.message || String(error);
+    console.error('[migrations] post-migration schema repair failed', error);
+    migrationErrors.push({ name: 'post_migration_schema_repair', error: errorText });
+  }
+
+  return {
+    degraded: migrationErrors.length > 0,
+    migrationErrors,
+    schemaVersion: getSchemaVersion(db),
+    migrations: getMigrationRecords(db),
+  };
 }
 
 module.exports = {
   LATEST_SCHEMA_VERSION,
+  SETTINGS_COLUMN_DEFS,
   applyMigrations,
   tableExists,
   columnExists,
@@ -329,4 +400,8 @@ module.exports = {
   migrationV2,
   getSchemaVersion,
   setSchemaVersion,
+  ensureMigrationsTable,
+  getMigrationRecords,
+  ensureSettingsColumns,
+  indexExists,
 };

@@ -2,12 +2,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
-const { initDb } = require('./db');
+const { initDb, getDbRuntimeStatus } = require('./db');
 const { Scanner } = require('./scanner');
 const { normalizeTitle } = require('./normalize');
 const { createDiscographyService } = require('./discography');
 const { createLidarrClient } = require('./lidarr');
 const { ArtworkService } = require('./artwork');
+const { SETTINGS_COLUMN_DEFS, columnExists, indexExists } = require('./db/migrations');
 
 const APP_NAME = 'crate';
 const PORT = Number(process.env.PORT || 4000);
@@ -21,6 +22,19 @@ const artwork = new ArtworkService(db, app.log);
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const VERSION = process.env.GIT_SHA || pkg.version;
+
+function parseFolderNamesSetting(value) {
+  if (!value) return [];
+  const raw = String(value).trim();
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((v) => String(v).trim()).filter(Boolean);
+    } catch {}
+  }
+  return raw.split(',').map((v) => v.trim()).filter(Boolean);
+}
 
 function normalizeSettings(row) {
   return {
@@ -47,7 +61,7 @@ function normalizeSettings(row) {
     scanIncludeDiscSubfolders: row.scanIncludeDiscSubfolders === undefined ? true : Boolean(row.scanIncludeDiscSubfolders),
     scanIncludeSingles: row.scanIncludeSingles === undefined ? true : Boolean(row.scanIncludeSingles),
     scanTreatCompilationAsSeparate: row.scanTreatCompilationAsSeparate === undefined ? false : Boolean(row.scanTreatCompilationAsSeparate),
-    scanIgnoreFolderNames: String(row.scanIgnoreFolderNames || '.crate,_tmp,@eaDir').split(',').map((v) => v.trim()).filter(Boolean)
+    scanIgnoreFolderNames: parseFolderNamesSetting(row.scanIgnoreFolderNames)
   };
 }
 
@@ -314,13 +328,52 @@ app.get('/health', async () => {
   } catch {
     dbOk = false;
   }
+  const runtime = getDbRuntimeStatus(db);
   return {
     ok: true,
     name: APP_NAME,
     version: VERSION,
     db: dbOk,
+    degraded: runtime.degraded,
+    migrationErrors: runtime.migrationErrors,
     musicMounted: fs.existsSync(settings.libraryPath),
     lastScanAt: settings.lastScanAt
+  };
+});
+
+
+app.get('/api/debug/db', async () => {
+  const runtime = getDbRuntimeStatus(db);
+  const settingsColumns = db.prepare('PRAGMA table_info(settings)').all().map((column) => column.name);
+  const missingSettingsColumns = SETTINGS_COLUMN_DEFS.map((def) => def.name).filter((name) => !settingsColumns.includes(name));
+
+  const albumKeyMissingColumn = !columnExists(db, 'albums', 'albumKey');
+  const albumKeyMissingOrEmpty = albumKeyMissingColumn
+    ? db.prepare('SELECT COUNT(*) AS c FROM albums').get().c
+    : db.prepare("SELECT COUNT(*) AS c FROM albums WHERE albumKey IS NULL OR TRIM(albumKey) = ''").get().c;
+
+  const keyIndexes = {
+    idx_albums_album_key_unique: indexExists(db, 'idx_albums_album_key_unique'),
+    idx_artists_slug_unique: indexExists(db, 'idx_artists_slug_unique'),
+    idx_expected_artists_artist_unique: indexExists(db, 'idx_expected_artists_artist_unique')
+  };
+
+  return {
+    dbPath: runtime.dbPath,
+    schemaVersion: runtime.schemaVersion,
+    degraded: runtime.degraded,
+    migrations: runtime.migrations,
+    migrationErrors: runtime.migrationErrors,
+    criticalFieldCounts: {
+      albumsAlbumKeyMissingColumn: albumKeyMissingColumn ? 1 : 0,
+      albumsAlbumKeyMissingOrEmpty: albumKeyMissingOrEmpty,
+      settingsMissingColumns: missingSettingsColumns.length
+    },
+    settings: {
+      missingColumns: missingSettingsColumns,
+      emptyScanIgnoreFolderNamesRows: db.prepare("SELECT COUNT(*) AS c FROM settings WHERE scanIgnoreFolderNames IS NULL OR TRIM(scanIgnoreFolderNames) = ''").get().c
+    },
+    keyIndexes
   };
 });
 
