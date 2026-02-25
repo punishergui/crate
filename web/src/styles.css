@@ -127,12 +127,15 @@ h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
 .badge { font-size: .72rem; border: 1px solid var(--accent); border-radius: 999px; padding: .1rem .45rem; }
 
 .artwork-badge { position: absolute; right: 6px; bottom: 6px; font-size: .62rem; padding: .1rem .35rem; border: 1px solid var(--border); background: rgb(0 0 0 / 50%); border-radius: 999px; }
-#artHoverPreview { position: fixed; top: 0; left: 0; z-index: 90; width: clamp(170px, 24vw, var(--artPopoutSize)); pointer-events: none; border: 1px solid var(--artBorder); background: var(--surface2); box-shadow: 0 16px 44px rgb(0 0 0 / 65%), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); overflow: hidden; border-radius: 0; }
+:root { --hover-art-size: clamp(220px, 24vw, 320px); }
+#artHoverPreview { position: fixed; top: 0; left: 0; z-index: 9999; pointer-events: none; display: grid; gap: .35rem; align-self: flex-start; }
 #artHoverPreview[hidden] { display: none; }
-#artHoverImg, #artHoverFallback { width: 100%; aspect-ratio: 1 / 1; display: grid; place-items: center; }
+#artHoverArtBox { width: var(--hover-art-size, 320px); aspect-ratio: 1 / 1; overflow: hidden; border-radius: 0; background: rgb(0 0 0 / 25%); border: 1px solid rgb(255 255 255 / 12%); box-shadow: 0 16px 44px rgb(0 0 0 / 65%), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); }
+#artHoverImg, #artHoverFallback { width: 100%; height: 100%; display: block; }
 #artHoverImg { object-fit: cover; }
-#artHoverFallback { font-weight: 700; background: linear-gradient(135deg, color-mix(in srgb, var(--artPlaceholder1) 82%, transparent) 0%, color-mix(in srgb, var(--artPlaceholder2) 82%, transparent) 100%); }
-#artHoverMeta { padding: 0.3rem 0.4rem; font-size: .72rem; line-height: 1.25; color: var(--text); background: linear-gradient(180deg, rgb(0 0 0 / 16%), rgb(0 0 0 / 55%)); display: grid; }
+#artHoverFallback { display: grid; place-items: center; font-weight: 700; font-size: 1.7rem; background: radial-gradient(circle at 20% 18%, rgb(255 255 255 / .16), transparent 50%), linear-gradient(135deg, color-mix(in srgb, var(--artPlaceholder1) 86%, transparent) 0%, color-mix(in srgb, var(--artPlaceholder2) 86%, transparent) 100%); }
+#artHoverFallback span { opacity: .88; }
+#artHoverMeta { padding: 0.35rem 0.45rem; max-width: var(--hover-art-size, 320px); font-size: .72rem; line-height: 1.25; color: var(--text); background: linear-gradient(180deg, rgb(0 0 0 / 16%), rgb(0 0 0 / 55%)); border: 1px solid rgb(255 255 255 / 12%); }
 #artHoverMeta span { color: var(--muted); }
 @media (hover: none), (pointer: coarse) { #artHoverPreview { display: none !important; } }
 .album-grid { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fill, minmax(var(--artTile), 1fr)); }

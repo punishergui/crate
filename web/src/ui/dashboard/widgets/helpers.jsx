@@ -8,7 +8,7 @@ export function SkeletonRows({ rows = 3 }) {
 
 export function AlbumTile({ album, subtext, size = 'tile-lg' }) {
   return <article className="media-tile media-tile-art">
-    <Artwork kind="album" id={album?.id || album?.albumId} title={album.title || 'Unknown release'} subtitle={album.artistName || 'Unknown artist'} alt={`${album.title || 'Album'} cover`} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size={size} popout popoutTitle={album.title || 'Unknown release'} popoutSubtitle={album.artistName || 'Unknown artist'} badge={album.artworkSource || ''} />
+    <Artwork kind="album" id={album?.id || album?.albumId} hoverFallbackId={album?.artistId} title={album.title || 'Unknown release'} subtitle={album.artistName || 'Unknown artist'} alt={`${album.title || 'Album'} cover`} fallbackSeed={`${album.artistName || ''} ${album.title || ''}`} size={size} popout popoutTitle={album.title || 'Unknown release'} popoutSubtitle={album.artistName || 'Unknown artist'} badge={album.artworkSource || ''} />
     <div><strong>{album.title || 'Unknown release'}</strong><span className="muted">{subtext || album.artistName || 'Unknown artist'}</span></div>
   </article>;
 }
