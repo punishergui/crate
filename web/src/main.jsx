@@ -79,16 +79,13 @@ function safeParseDetails(raw) { if (!raw) return {}; try { return JSON.parse(ra
 
 function useArtHover(enabled) {
   React.useEffect(() => {
-    let cleanup;
-    const load = async () => {
-      try {
-        const mod = await (0, eval)("import('/js/coverHoverPreview.js')");
-        if (!enabled) return;
-        cleanup = mod.attachCoverHoverPreview('.content');
-      } catch {}
-    };
-    load();
-    return () => { if (cleanup) cleanup(); };
+    let cleanup = () => {};
+    if (!enabled) return cleanup;
+    import('./client/js/artHover').then((mod) => {
+      mod.initArtHover();
+      cleanup = mod.attachArtHover(document);
+    }).catch(() => {});
+    return () => cleanup();
   }, [enabled]);
 }
 
@@ -210,12 +207,23 @@ function ArtworkSettingsPage() {
 function ThemesSettingsPage() {
   const [activeTheme, setActiveTheme] = React.useState(getTheme());
   const onApply = (id) => { applyTheme(id); setActiveTheme(id); };
-  return <section className="page-stack"><h1>Themes</h1><div className="themes-grid">{THEMES.map((theme) => <article key={theme.id} className={`theme-card ${activeTheme === theme.id ? 'active' : ''}`}>
-    <div className="theme-swatch-row">{theme.swatches.map((color) => <span key={color} className="swatch-dot" style={{ background: color }} />)}</div>
-    <strong>{theme.name} {activeTheme === theme.id ? <span className="badge">Active</span> : null}</strong><p>{theme.vibe}</p>
-    <div className="theme-live-preview"><div className="app-card"><div className="card-head"><h2>Preview</h2></div><div className="media-row"><Artwork size="sm" fallbackSeed={theme.name} overlay={<span>View</span>} /><button className="btn btn-small">Button</button></div><div className="preview-progress"><span style={{ width: '62%' }} /></div></div></div>
-    <button className="btn" onClick={() => onApply(theme.id)}>{activeTheme === theme.id ? 'Active' : 'Set Theme'}</button>
-  </article>)}</div></section>;
+  return <section className="page-stack"><h1>Themes</h1><div className="themes-grid">{THEMES.map((theme) => {
+    const active = activeTheme === theme.id;
+    return <article key={theme.id} className={`themeCard theme--${theme.id} ${active ? 'isActive' : ''}`}>
+      <div className="themePreview" aria-hidden>
+        <div className="themePreview-topbar" />
+        <div className="themePreview-body">
+          <div className="themePreview-nav"><span /><span /><span /></div>
+          <div className="themePreview-tiles"><span /><span /><span /></div>
+        </div>
+        <div className="themePreview-accent" />
+      </div>
+      <div className="themeMeta">
+        <strong>{theme.name} {active ? <span className="badge">Active</span> : null}</strong><p>{theme.vibe}</p>
+        <button className="btn" onClick={() => onApply(theme.id)}>{active ? 'Active' : 'Set Theme'}</button>
+      </div>
+    </article>;
+  })}</div></section>;
 }
 
 

@@ -44,7 +44,7 @@ export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSee
   const imgSize = getBestArtworkSize(numericPx);
   const resolvedSrc = src ? src.replace(/size=\d+/, `size=${imgSize}`) : src;
   const showImage = Boolean(resolvedSrc && !failed && visible);
-  const shouldPopout = popout && ['xs', 'sm', 'tile', 'tile-lg'].includes(size);
+  const shouldPopout = true;
   const initials = initialsFromSeed(fallbackSeed || alt);
 
   return (
@@ -52,12 +52,9 @@ export default function Artwork({ src, alt = 'Artwork', size = 'md', fallbackSee
       ref={ref}
       className="artwork media-tile__image"
       style={{ width: px, '--shift': `${colorShift(fallbackSeed)}deg` }}
-      data-art-popout-src={shouldPopout && showImage ? resolvedSrc : ''}
-      data-art-popout-title={shouldPopout ? (popoutTitle || alt) : undefined}
-      data-art-popout-subtitle={shouldPopout ? popoutSubtitle : undefined}
-      data-art-popout-initials={shouldPopout ? initials : undefined}
-      data-art-popout-shift={shouldPopout ? `${colorShift(fallbackSeed)}deg` : undefined}
-      tabIndex={shouldPopout ? 0 : undefined}
+      data-art-hover={shouldPopout ? '1' : undefined}
+      data-art-src={shouldPopout && showImage ? resolvedSrc : ''}
+      data-art-label={shouldPopout ? [popoutTitle || alt, popoutSubtitle].filter(Boolean).join(' · ') : undefined}
     >
       {showImage ? (
         <img
