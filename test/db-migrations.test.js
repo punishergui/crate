@@ -6,6 +6,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 const { initDb, LATEST_SCHEMA_VERSION } = require('../server/db');
+const { migrationV2 } = require('../server/db/migrations');
 
 function createLegacyDb(dbPath) {
   const db = new Database(dbPath);
@@ -230,6 +231,81 @@ test('initDb migrates legacy schema and writes schema version into meta', () => 
 
   const canonicalReason = db.prepare('SELECT reason FROM scan_skipped WHERE id = 1').get();
   assert.equal(canonicalReason.reason, 'missing_tags');
+
+  db.close();
+});
+
+test('migrationV2 repairs colliding albumKey values and allows unique index creation', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE artists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL
+    );
+
+    CREATE TABLE albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artistId INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      albumKey TEXT,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY(artistId) REFERENCES artists(id)
+    );
+
+    CREATE TABLE expected_artists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artistId INTEGER NOT NULL
+    );
+
+    CREATE TABLE expected_albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expectedArtistId INTEGER NOT NULL,
+      mb_release_group_id TEXT,
+      normalizedTitle TEXT NOT NULL
+    );
+
+    CREATE TABLE file_index (
+      path TEXT PRIMARY KEY,
+      inodeKey TEXT,
+      fileHash TEXT
+    );
+
+    CREATE TABLE wishlist_albums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      status TEXT NOT NULL DEFAULT 'wanted'
+    );
+
+    INSERT INTO artists (name) VALUES ('Beyoncé');
+
+    INSERT INTO albums (artistId, title, path, albumKey, deleted)
+    VALUES
+      (1, 'Renaissance', '/music/beyonce/renaissance-a', '', 0),
+      (1, 'Renaissance', '/music/beyonce/renaissance-b', '', 0);
+  `);
+
+  db.transaction(() => migrationV2(db))();
+
+  const rows = db.prepare('SELECT id, albumKey FROM albums ORDER BY id ASC').all();
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].albumKey);
+  assert.ok(rows[1].albumKey);
+  assert.notEqual(rows[0].albumKey, rows[1].albumKey);
+
+  const duplicateCount = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM (
+      SELECT albumKey
+      FROM albums
+      WHERE albumKey IS NOT NULL AND albumKey != ''
+      GROUP BY albumKey
+      HAVING COUNT(*) > 1
+    )
+  `).get();
+  assert.equal(duplicateCount.c, 0);
+
+  db.exec('DROP INDEX IF EXISTS idx_albums_album_key_unique');
+  db.exec('CREATE UNIQUE INDEX idx_albums_album_key_unique ON albums(albumKey)');
 
   db.close();
 });
