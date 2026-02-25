@@ -19,6 +19,9 @@ function createLegacyDb(dbPath) {
       lastScanAt TEXT
     );
 
+    INSERT INTO settings(id, accentColor, noiseOverlay, libraryPath, lastScanAt)
+    VALUES(1, '#FF6A00', 1, '/music', NULL);
+
     CREATE TABLE artists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
@@ -26,6 +29,9 @@ function createLegacyDb(dbPath) {
       firstSeen TEXT NOT NULL,
       lastSeen TEXT NOT NULL
     );
+
+    INSERT INTO artists(name, deleted, firstSeen, lastSeen)
+    VALUES ('Boards of Canada', 0, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z');
 
     CREATE TABLE albums (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +46,9 @@ function createLegacyDb(dbPath) {
       deleted INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY(artistId) REFERENCES artists(id)
     );
+
+    INSERT INTO albums(artistId, title, path, firstSeen, lastSeen, lastFileMtime, formatsJson, trackCount, deleted)
+    VALUES (1, 'Music Has the Right to Children', '/music/Boards of Canada/Music Has the Right to Children', '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z', NULL, '[]', 0, 0);
 
     CREATE TABLE tracks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +82,9 @@ function createLegacyDb(dbPath) {
       reason TEXT NOT NULL,
       createdAt TEXT NOT NULL
     );
+
+    INSERT INTO scan_skipped(scanStartedAt, filePath, reason, createdAt)
+    VALUES ('2024-01-02T00:00:00.000Z', '/music/foo.mp3', 'missing tags', '2024-01-02T00:00:00.000Z');
 
     CREATE TABLE wanted_albums (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,21 +197,39 @@ function createLegacyDb(dbPath) {
   db.close();
 }
 
-test('initDb migrates legacy schema to include albums.albumKey and schema version', () => {
+test('initDb migrates legacy schema and writes schema version into meta', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crate-db-migration-'));
   const dbPath = path.join(tmpDir, 'legacy.sqlite');
   createLegacyDb(dbPath);
 
   const db = initDb({ dbPath });
 
-  const userVersion = db.pragma('user_version', { simple: true });
-  assert.equal(userVersion, LATEST_SCHEMA_VERSION);
+  const schemaVersion = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+  assert.equal(Number(schemaVersion.value), LATEST_SCHEMA_VERSION);
+
+  const settingsColumns = db.prepare('PRAGMA table_info(settings)').all().map((column) => column.name);
+  assert.ok(settingsColumns.includes('scanIgnoreFolderNames'));
+  assert.ok(settingsColumns.includes('scanMaxDepth'));
+  assert.ok(settingsColumns.includes('scanIncludeDiscSubfolders'));
+  assert.ok(settingsColumns.includes('scanIncludeSingles'));
+
+  const settingsRow = db.prepare('SELECT scanIgnoreFolderNames, scanMaxDepth, scanIncludeDiscSubfolders, scanIncludeSingles FROM settings WHERE id = 1').get();
+  assert.equal(settingsRow.scanIgnoreFolderNames, '.crate,_tmp,@eaDir');
+  assert.equal(settingsRow.scanMaxDepth, 3);
+  assert.equal(settingsRow.scanIncludeDiscSubfolders, 1);
+  assert.equal(settingsRow.scanIncludeSingles, 1);
 
   const albumColumns = db.prepare('PRAGMA table_info(albums)').all().map((column) => column.name);
   assert.ok(albumColumns.includes('albumKey'));
 
+  const albumKeyRow = db.prepare('SELECT albumKey FROM albums WHERE id = 1').get();
+  assert.ok(albumKeyRow.albumKey);
+
   const albumKeyIndex = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_albums_album_key_unique'").get();
   assert.ok(albumKeyIndex);
+
+  const canonicalReason = db.prepare('SELECT reason FROM scan_skipped WHERE id = 1').get();
+  assert.equal(canonicalReason.reason, 'missing_tags');
 
   db.close();
 });
