@@ -7,12 +7,15 @@ const {
   columnExists,
   addColumnIfMissing,
   ensureIndex,
+  ensureSettingsColumns,
+  getMigrationRecords,
+  getSchemaVersion,
 } = require('./db/migrations');
 
 const DATA_DIR = '/data';
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
-const DB_PATH = path.join(DATA_DIR, 'crate.sqlite');
+const DB_PATH = process.env.CRATE_DB_PATH || path.join(DATA_DIR, 'crate.sqlite');
 
 function ensureDataDirs() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -60,7 +63,7 @@ function initDb(options = {}) {
       scanIncludeDiscSubfolders INTEGER NOT NULL DEFAULT 1,
       scanIncludeSingles INTEGER NOT NULL DEFAULT 1,
       scanTreatCompilationAsSeparate INTEGER NOT NULL DEFAULT 0,
-      scanIgnoreFolderNames TEXT NOT NULL DEFAULT '.crate,_tmp,@eaDir'
+      scanIgnoreFolderNames TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE TABLE IF NOT EXISTS artists (
@@ -256,14 +259,30 @@ function initDb(options = {}) {
   `);
 
   try {
-    applyMigrations(db);
+    const migrationState = applyMigrations(db, { migrations: options.migrations });
+    db.crateRuntime = {
+      degraded: Boolean(migrationState?.degraded),
+      migrationErrors: migrationState?.migrationErrors || [],
+    };
   } catch (error) {
     throw wrapMigrationErrors(error);
   }
 
-  db.prepare("INSERT OR IGNORE INTO settings (id, scanIgnoreFolderNames) VALUES (1, '.crate,_tmp,@eaDir')").run();
+  ensureSettingsColumns(db);
+  db.prepare("INSERT OR IGNORE INTO settings (id, scanIgnoreFolderNames) VALUES (1, '[]')").run();
   db.prepare('INSERT OR IGNORE INTO scan_state (id) VALUES (1)').run();
   return db;
+}
+
+
+function getDbRuntimeStatus(db) {
+  return {
+    dbPath: db.name || DB_PATH,
+    degraded: Boolean(db.crateRuntime?.degraded),
+    migrationErrors: db.crateRuntime?.migrationErrors || [],
+    schemaVersion: getSchemaVersion(db),
+    migrations: getMigrationRecords(db),
+  };
 }
 
 module.exports = {
@@ -273,5 +292,6 @@ module.exports = {
   hasColumn: columnExists,
   ensureColumn: addColumnIfMissing,
   ensureIndex,
-  LATEST_SCHEMA_VERSION
+  LATEST_SCHEMA_VERSION,
+  getDbRuntimeStatus
 };
