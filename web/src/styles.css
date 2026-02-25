@@ -128,7 +128,7 @@ h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
 
 .artwork-badge { position: absolute; right: 6px; bottom: 6px; font-size: .62rem; padding: .1rem .35rem; border: 1px solid var(--border); background: rgb(0 0 0 / 50%); border-radius: 999px; }
 :root { --hover-art-size: 320px; }
-.hover-preview-root { position: fixed; width: var(--hover-art-size, 320px); height: var(--hover-art-size, 320px); pointer-events: none; z-index: 9999; }
+.hover-preview-root { position: fixed; width: var(--hover-art-size, 320px); height: var(--hover-art-size, 320px); opacity: 1; pointer-events: none; z-index: 9999; }
 .hoverArtBox { width: 100%; height: 100%; overflow: hidden; border-radius: 0; position: relative; border: 1px solid rgb(255 255 255 / 12%); box-shadow: 0 16px 44px rgb(0 0 0 / 65%), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); }
 .hoverArtImage,
 .hoverArtPlaceholder { width: 100%; height: 100%; display: block; }

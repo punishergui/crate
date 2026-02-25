@@ -1,5 +1,6 @@
 import React from 'react';
 import { buildArtHoverAttrs, getBestArtworkSize, getKnownArtworkAvailability, rememberArtworkAvailability, resolveArtworkUrl } from '../lib/artwork';
+import { useHoverPreview } from './HoverPreviewContext';
 
 const SIZE_MAP = { xs: 28, sm: 48, md: 88, lg: 140, xl: 220, tile: 'var(--tile-size, 128px)', 'tile-lg': 'var(--tile-size-lg, 160px)' };
 
@@ -20,6 +21,7 @@ export default function Artwork({ kind = 'album', id = null, hoverFallbackId = n
   const [failed, setFailed] = React.useState(false);
   const ref = React.useRef(null);
   const [visible, setVisible] = React.useState(false);
+  const { setHoverActive, setHoverPos, clearHover } = useHoverPreview();
 
   const px = widthPx || SIZE_MAP[size] || SIZE_MAP.md;
   const numericPx = typeof px === 'number' ? px : 256;
@@ -61,12 +63,36 @@ export default function Artwork({ kind = 'album', id = null, hoverFallbackId = n
     subtitle: displaySubtitle
   });
 
+  const onMouseEnter = React.useCallback((event) => {
+    if (!popout) return;
+    setHoverActive({
+      id: `${kind}-${id || title || alt}`,
+      src: resolvedSrc || '',
+      fallbackSrc: fallbackHoverSrc,
+      title: displayTitle,
+      subtitle: displaySubtitle
+    });
+    setHoverPos({ x: event.clientX, y: event.clientY });
+  }, [alt, displaySubtitle, displayTitle, fallbackHoverSrc, id, kind, popout, resolvedSrc, setHoverActive, setHoverPos, title]);
+
+  const onMouseMove = React.useCallback((event) => {
+    if (!popout) return;
+    setHoverPos({ x: event.clientX, y: event.clientY });
+  }, [popout, setHoverPos]);
+
+  const onMouseLeave = React.useCallback(() => {
+    clearHover();
+  }, [clearHover]);
+
   return (
     <div
       ref={ref}
       className={`artwork media-tile__image ${className}`.trim()}
       style={{ width: px, '--shift': `${colorShift(fallbackSeed)}deg` }}
       {...hoverAttrs}
+      onMouseEnter={onMouseEnter}
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
     >
       {showImage ? (
         <img

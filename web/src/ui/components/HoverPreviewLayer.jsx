@@ -1,10 +1,10 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { useHoverPreview } from './HoverPreviewContext';
 
 const OFFSET = 24;
 const EDGE_GUTTER = 12;
 const HOVER_SIZE = 320;
-const HOVER_SELECTOR = '[data-art-hover="1"]';
 const preloadCache = new Map();
 
 function clampPosition(clientX, clientY, size = HOVER_SIZE) {
@@ -40,142 +40,59 @@ async function resolvePreviewSrc(primary = '', fallback = '') {
   return '';
 }
 
-function readHoverPayload(target) {
-  if (!target?.dataset) return null;
-  return {
-    src: target.dataset.artSrc || '',
-    fallbackSrc: target.dataset.artFallbackSrc || '',
-    title: target.dataset.artTitle || '',
-    subtitle: target.dataset.artSubtitle || ''
-  };
-}
-
 export default function HoverPreviewLayer({ enabled = true }) {
-  const [state, setState] = React.useState({
-    visible: false,
-    left: 0,
-    top: 0,
-    src: '',
-    title: '',
-    subtitle: '',
-    placeholder: true
-  });
-
+  const { hoverItem, cursorPos, clearHover } = useHoverPreview();
+  const [state, setState] = React.useState({ src: '', placeholder: true });
   const tokenRef = React.useRef(0);
-  const activeElRef = React.useRef(null);
-  const visibleRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (!enabled) {
-      visibleRef.current = false;
-      setState((prev) => ({ ...prev, visible: false }));
-      return undefined;
+    if (!enabled || !hoverItem) {
+      tokenRef.current += 1;
+      setState({ src: '', placeholder: true });
+      return;
     }
 
-    const hide = () => {
-      tokenRef.current += 1;
-      activeElRef.current = null;
-      visibleRef.current = false;
-      setState((prev) => ({ ...prev, visible: false }));
-    };
+    const token = tokenRef.current + 1;
+    tokenRef.current = token;
 
-    const updatePosition = (event) => {
-      const next = clampPosition(event.clientX, event.clientY, HOVER_SIZE);
-      setState((prev) => (prev.left === next.left && prev.top === next.top ? prev : { ...prev, ...next }));
-    };
+    setState({ src: '', placeholder: true });
 
-    const showForTarget = async (target, event) => {
-      const payload = readHoverPayload(target);
-      if (!payload) return;
-      const token = tokenRef.current + 1;
-      tokenRef.current = token;
-      activeElRef.current = target;
-      const next = clampPosition(event.clientX, event.clientY, HOVER_SIZE);
-      visibleRef.current = true;
-      setState({
-        visible: true,
-        left: next.left,
-        top: next.top,
-        src: '',
-        title: payload.title,
-        subtitle: payload.subtitle,
-        placeholder: true
-      });
-      const resolvedSrc = await resolvePreviewSrc(payload.src, payload.fallbackSrc);
-      if (tokenRef.current !== token || activeElRef.current !== target) return;
-      setState((prev) => ({
-        ...prev,
-        src: resolvedSrc,
-        title: payload.title,
-        subtitle: payload.subtitle,
-        placeholder: !resolvedSrc
-      }));
-    };
+    resolvePreviewSrc(hoverItem.src, hoverItem.fallbackSrc).then((resolvedSrc) => {
+      if (tokenRef.current !== token) return;
+      setState({ src: resolvedSrc, placeholder: !resolvedSrc });
+    });
+  }, [enabled, hoverItem]);
 
-    const getTarget = (event) => event.target?.closest?.(HOVER_SELECTOR);
+  React.useEffect(() => {
+    if (!enabled) clearHover();
+  }, [enabled, clearHover]);
 
-    const onMouseOver = (event) => {
-      const target = getTarget(event);
-      if (!target) return;
-      showForTarget(target, event);
-    };
+  if (!enabled || !hoverItem) return null;
 
-    const onMouseMove = (event) => {
-      if (!visibleRef.current && !activeElRef.current) return;
-      const target = getTarget(event);
-      if (!target) {
-        hide();
-        return;
-      }
-      if (target !== activeElRef.current) {
-        showForTarget(target, event);
-        return;
-      }
-      updatePosition(event);
-    };
-
-    const onMouseOut = (event) => {
-      if (!activeElRef.current) return;
-      const nextTarget = event.relatedTarget?.closest?.(HOVER_SELECTOR);
-      if (nextTarget) return;
-      hide();
-    };
-
-    document.addEventListener('mouseover', onMouseOver);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseout', onMouseOut);
-    window.addEventListener('scroll', hide, true);
-    window.addEventListener('blur', hide);
-
-    return () => {
-      document.removeEventListener('mouseover', onMouseOver);
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseout', onMouseOut);
-      window.removeEventListener('scroll', hide, true);
-      window.removeEventListener('blur', hide);
-      hide();
-    };
-  }, [enabled]);
-
-  if (!enabled || !state.visible) return null;
+  const next = clampPosition(cursorPos.x, cursorPos.y, HOVER_SIZE);
 
   return createPortal(
     <div
       id="artHoverPreview"
       className="hover-preview-root"
-      style={{ transform: `translate3d(${state.left}px, ${state.top}px, 0)` }}
+      style={{ transform: `translate3d(${next.left}px, ${next.top}px, 0)` }}
       aria-hidden="true"
     >
       <div className="hoverArtBox" role="presentation">
         {state.placeholder ? (
           <div className="hoverArtPlaceholder"><span>♪</span></div>
         ) : (
-          <img src={state.src} alt="" className="hoverArtImage" />
+          <img
+            src={state.src}
+            alt=""
+            className="hoverArtImage"
+            onError={() => setState({ src: '', placeholder: true })}
+          />
         )}
-        {(state.title || state.subtitle) ? (
+        {(hoverItem.title || hoverItem.subtitle) ? (
           <div className="hoverArtMeta">
-            <strong>{state.title}</strong>
-            {state.subtitle ? <span>{state.subtitle}</span> : null}
+            <strong>{hoverItem.title}</strong>
+            {hoverItem.subtitle ? <span>{hoverItem.subtitle}</span> : null}
           </div>
         ) : null}
       </div>

@@ -7,6 +7,7 @@ import DashboardPage from './ui/dashboard/dashboard';
 import Artwork from './ui/components/Artwork';
 import CoverTile from './ui/components/CoverTile';
 import HoverPreviewLayer from './ui/components/HoverPreviewLayer';
+import { HoverPreviewProvider } from './ui/components/HoverPreviewContext';
 import {
   getAlbumArtDiagnoseUrl,
   getAlbumArtRescanUrl,
@@ -511,4 +512,4 @@ function App() {
   </div>;
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><BrowserRouter><App /></BrowserRouter></React.StrictMode>);
+ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><BrowserRouter><HoverPreviewProvider><App /></HoverPreviewProvider></BrowserRouter></React.StrictMode>);
